@@ -1,0 +1,6 @@
+{
+  "name": "Dimensio",
+  "description": "Dimensionamento e Gestão de Equipes, Escalas e Relatórios Diários",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

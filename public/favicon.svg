@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="64" height="64">
+  <!-- Fundo preto quadrado com cantos arredondados -->
+  <rect x="2" y="2" width="44" height="44" rx="11" fill="#090d16" />
+  
+  <!-- Letra D branca com trilhas estilo fluxograma -->
+  <path d="M 14 10 H 21 C 33 10 38 15.5 38 24 C 38 32.5 33 38 21 38 H 14 Z" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 14 10 H 21 C 33 10 38 15.5 38 24 C 38 32.5 33 38 21 38 H 14 Z" fill="none" stroke="#ffffff" stroke-width="3.1" stroke-linecap="round" stroke-linejoin="round"/>
+  <g stroke="#ffffff" stroke-opacity="0.85" stroke-width="1.2" stroke-linecap="round">
+    <line x1="20" y1="17" x2="20" y2="31"/>
+    <line x1="27" y1="17" x2="27" y2="31"/>
+    <line x1="20" y1="17" x2="27" y2="17"/>
+    <line x1="20" y1="24" x2="27" y2="24"/>
+    <line x1="20" y1="31" x2="27" y2="31"/>
+  </g>
+  <g fill="#ffffff" fill-opacity="0.9">
+    <circle cx="20" cy="17" r="1.8"/>
+    <circle cx="20" cy="24" r="1.8"/>
+    <circle cx="20" cy="31" r="1.8"/>
+    <circle cx="27" cy="17" r="1.8"/>
+    <circle cx="27" cy="24" r="1.8"/>
+    <circle cx="27" cy="31" r="1.8"/>
+  </g>
+</svg>

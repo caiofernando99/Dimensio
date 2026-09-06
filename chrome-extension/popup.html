@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dimensio — Painel Rápido</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    body {
+      width: 320px;
+      padding: 16px;
+      background-color: #0f172a;
+      color: #f8fafc;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #1e293b;
+    }
+    .title-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #818cf8;
+    }
+    .badge {
+      font-size: 10px;
+      background: #312e81;
+      color: #a5b4fc;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .status-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .status-title {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-bottom: 4px;
+    }
+    .status-value {
+      font-size: 14px;
+      font-weight: 600;
+      color: #38bdf8;
+    }
+    .btn {
+      width: 100%;
+      padding: 10px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      transition: background 0.2s;
+    }
+    .btn-primary {
+      background: #4f46e5;
+      color: #ffffff;
+    }
+    .btn-primary:hover {
+      background: #4338ca;
+    }
+    .btn-secondary {
+      background: #334155;
+      color: #e2e8f0;
+    }
+    .btn-secondary:hover {
+      background: #475569;
+    }
+    .footer {
+      text-align: center;
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title-group">
+      <span class="title">Dimensio</span>
+      <span class="badge">v1.0.0</span>
+    </div>
+    <span style="font-size: 12px; color: #4ade80;">● Ativo</span>
+  </div>
+
+  <div class="status-card">
+    <div class="status-title">Status do Monitoramento</div>
+    <div class="status-value" id="statusText">Notificações em Segundo Plano Ativas</div>
+  </div>
+
+  <button class="btn btn-primary" id="openAppBtn">
+    🚀 Abrir Aplicação Dimensio
+  </button>
+
+  <button class="btn btn-secondary" id="testNotifBtn">
+    🔔 Testar Notificação Chrome
+  </button>
+
+  <div class="footer">
+    Extensão Oficial Dimensio — Escalas & Operação
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

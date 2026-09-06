@@ -1,0 +1,58 @@
+{
+  "$schema": "https://raw.githubusercontent.com/firebase/firebase-tools/master/schema/firestore-blueprint.json",
+  "entities": {
+    "dimensio_workspaces": {
+      "title": "Dimensio Workspaces",
+      "description": "Main state synchronization workspace for collaborative team scale and shift roster",
+      "type": "object",
+      "properties": {
+        "sector": { "type": "string" },
+        "registeredSectors": { "type": "array" },
+        "collaborators": { "type": "array" },
+        "tasks": { "type": "array" },
+        "breaks": { "type": "array" },
+        "attendance": { "type": "object" },
+        "notifications": { "type": "array" },
+        "serviceRequests": { "type": "array" },
+        "supportMessages": { "type": "array" },
+        "scheduledTasks": { "type": "array" },
+        "updatedAtMs": { "type": "number" }
+      }
+    },
+    "dimensio_history": {
+      "title": "Dimensio Shift Closings History",
+      "description": "Historical snapshots of finalized work shifts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "shift": { "type": "string" },
+        "closedAt": { "type": "string" },
+        "closedByName": { "type": "string" }
+      }
+    },
+    "dimensio_user_profiles": {
+      "title": "Dimensio User Profiles",
+      "description": "Personal user sessions, profile photo, sector, work status, private notes, and preferences",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "collaboratorId": { "type": "string" },
+        "role": { "type": "string" },
+        "shift": { "type": "string" },
+        "sector": { "type": "string" },
+        "allowedSectors": { "type": "array" },
+        "canProvideCrossSectorSupport": { "type": "boolean" },
+        "isSupportAttendant": { "type": "boolean" },
+        "workStatus": { "type": "string" },
+        "statusCustomMessage": { "type": "string" },
+        "preferences": { "type": "object" },
+        "privateScratchpad": { "type": "string" },
+        "lastSeenMs": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  }
+}

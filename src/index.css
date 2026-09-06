@@ -1,0 +1,497 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Poppins:wght@400;600;700;800;900&family=Montserrat:wght@400;600;700;800;900&family=Open+Sans:wght@400;600;700;800&family=Space+Grotesk:wght@400;600;700&family=Roboto:wght@400;500;700;900&family=Lato:wght@400;700;900&family=Merriweather:wght@400;700;900&family=Playfair+Display:wght@400;700;900&display=swap');
+@import "tailwindcss";
+
+/* Slightly stronger elevation for the small shadow utilities heavily used by
+   cards/panels, so elements separate clearly from the tinted background. */
+@theme inline {
+  --shadow-2xs: 0 1px 2px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.06);
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.06), 0 3px 6px -2px rgb(0 0 0 / 0.07);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.07), 0 3px 8px -2px rgb(0 0 0 / 0.08);
+}
+
+/* Scope Tailwind's `dark:` variant to the `.dark` class instead of the OS
+   prefers-color-scheme. This keeps dark text/background pairs in sync with the
+   app's theme selector (`.dark` is added for the dark themes), so light themes
+   never show light text on light cards and vice-versa. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #eef1fa;
+  --paper: #ffffff;
+  --surface: var(--paper);
+  --card: var(--paper);
+  --ink: #161633;
+  --muted: #50546e;
+  --line: #d5d9ec;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-soft: #eef2ff;
+  --primary-border: #b8c3f8;
+  --accent: #7c3aed;
+  --sidebar-bg: #17143b;
+  --sidebar-ink: #eef2ff;
+  --sidebar-hover: #2b2862;
+  --sidebar-active: #5b5fe6;
+  --card-shadow: 0 1px 2px rgba(22, 22, 51, 0.05), 0 6px 16px -6px rgba(22, 22, 51, 0.1);
+}
+
+/* Derived, theme-agnostic tokens (resolved at use-site against each theme) */
+:root {
+  --surface-2: color-mix(in srgb, var(--bg) 60%, var(--paper));
+  --surface-3: color-mix(in srgb, var(--line) 30%, var(--paper));
+  --hover-bg: color-mix(in srgb, var(--primary-soft) 50%, var(--paper));
+  --radius-sm: 0.5rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.125rem;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04), 0 6px 16px -6px rgb(0 0 0 / 0.09);
+  --shadow-pop: 0 16px 40px -12px rgb(0 0 0 / 0.22);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+/* 7 Dimensio Curated Themes */
+[data-theme="dimensio"] {
+  --bg: #eef1fa;
+  --paper: #ffffff;
+  --ink: #161633;
+  --muted: #50546e;
+  --line: #d5d9ec;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-soft: #eef2ff;
+  --primary-border: #b8c3f8;
+  --accent: #7c3aed;
+  --sidebar-bg: #17143b;
+  --sidebar-ink: #eef2ff;
+  --sidebar-hover: #2b2862;
+  --sidebar-active: #5b5fe6;
+  --card-shadow: 0 1px 2px rgba(22, 22, 51, 0.05), 0 6px 16px -6px rgba(22, 22, 51, 0.1);
+}
+
+[data-theme="aurora"] {
+  --bg: #e5f3ee;
+  --paper: #ffffff;
+  --ink: #04241c;
+  --muted: #33554b;
+  --line: #aed6c9;
+  --primary: #0d9488;
+  --primary-hover: #0f766e;
+  --primary-soft: #ccfbf1;
+  --primary-border: #4adbc4;
+  --accent: #10b981;
+  --sidebar-bg: #0a2e26;
+  --sidebar-ink: #ccfbf1;
+  --sidebar-hover: #115e59;
+  --sidebar-active: #0d9488;
+  --card-shadow: 0 1px 2px rgba(4, 36, 28, 0.06), 0 8px 20px -8px rgba(13, 148, 136, 0.22), 0 2px 6px -2px rgba(4, 36, 28, 0.06);
+}
+
+[data-theme="ocean"] {
+  --bg: #e7f0fb;
+  --paper: #ffffff;
+  --ink: #081a2e;
+  --muted: #2b4765;
+  --line: #b0c9e8;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-soft: #eff6ff;
+  --primary-border: #7db7fb;
+  --accent: #06b6d4;
+  --sidebar-bg: #0b1f33;
+  --sidebar-ink: #eff6ff;
+  --sidebar-hover: #1e3a5f;
+  --sidebar-active: #2563eb;
+  --card-shadow: 0 1px 2px rgba(8, 26, 46, 0.06), 0 8px 20px -8px rgba(37, 99, 235, 0.22), 0 2px 6px -2px rgba(8, 26, 46, 0.06);
+}
+
+[data-theme="sunset"] {
+  --bg: #faf0e2;
+  --paper: #ffffff;
+  --ink: #26150b;
+  --muted: #5e493c;
+  --line: #e2c7ae;
+  --primary: #ea580c;
+  --primary-hover: #c2410c;
+  --primary-soft: #fff7ed;
+  --primary-border: #fba95a;
+  --accent: #e11d48;
+  --sidebar-bg: #2a1a10;
+  --sidebar-ink: #fff7ed;
+  --sidebar-hover: #4a2f1e;
+  --sidebar-active: #ea580c;
+  --card-shadow: 0 1px 2px rgba(38, 21, 11, 0.06), 0 8px 20px -8px rgba(234, 88, 12, 0.2), 0 2px 6px -2px rgba(38, 21, 11, 0.06);
+}
+
+[data-theme="crimson"] {
+  --bg: #f9e7ec;
+  --paper: #ffffff;
+  --ink: #260b11;
+  --muted: #5f313a;
+  --line: #e2b6c1;
+  --primary: #be123c;
+  --primary-hover: #9f1239;
+  --primary-soft: #ffe4e6;
+  --primary-border: #f8909f;
+  --accent: #db2777;
+  --sidebar-bg: #2b0f15;
+  --sidebar-ink: #ffe4e6;
+  --sidebar-hover: #4c1d28;
+  --sidebar-active: #be123c;
+  --card-shadow: 0 1px 2px rgba(38, 11, 17, 0.06), 0 8px 20px -8px rgba(190, 18, 60, 0.2), 0 2px 6px -2px rgba(38, 11, 17, 0.06);
+}
+
+[data-theme="midnight"] {
+  --bg: #0a0e1c;
+  --paper: #14192b;
+  --ink: #e8eaf7;
+  --muted: #abb0cc;
+  --line: #3a4266;
+  --primary: #6366f1;
+  --primary-hover: #818cf8;
+  --primary-soft: #1e2142;
+  --primary-border: #4d5499;
+  --accent: #38bdf8;
+  --sidebar-bg: #070915;
+  --sidebar-ink: #e8eaf7;
+  --sidebar-hover: #191f35;
+  --sidebar-active: #6366f1;
+  --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="graphite"] {
+  --bg: #14151a;
+  --paper: #1d1f26;
+  --ink: #edeff4;
+  --muted: #bcc0cc;
+  --line: #464a56;
+  --primary: #f0b429;
+  --primary-hover: #f7c948;
+  --primary-soft: #2a2512;
+  --primary-border: #755f1a;
+  --accent: #a3e635;
+  --sidebar-bg: #0e0f12;
+  --sidebar-ink: #edeff4;
+  --sidebar-hover: #24262e;
+  --sidebar-active: #f0b429;
+  --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+}
+
+/* Material Design 3 / Material You Themes */
+[data-theme="material-emerald"] {
+  --bg: #edf7f2;
+  --paper: #ffffff;
+  --ink: #002114;
+  --muted: #38423c;
+  --line: #c0d6ca;
+  --primary: #006c4c;
+  --primary-hover: #005239;
+  --primary-soft: #e6f7f0;
+  --primary-border: #77cfb0;
+  --accent: #3b6555;
+  --sidebar-bg: #002114;
+  --sidebar-ink: #e6f7f0;
+  --sidebar-hover: #003823;
+  --sidebar-active: #006c4c;
+  --card-shadow: 0 1px 2px rgba(0, 33, 20, 0.06), 0 8px 20px -8px rgba(0, 108, 76, 0.2), 0 2px 6px -2px rgba(0, 33, 20, 0.06);
+}
+
+[data-theme="material-blue"] {
+  --bg: #eef2fb;
+  --paper: #ffffff;
+  --ink: #001a41;
+  --muted: #3a404e;
+  --line: #c2cee9;
+  --primary: #005ac1;
+  --primary-hover: #004494;
+  --primary-soft: #edf2ff;
+  --primary-border: #92b7fa;
+  --accent: #535f70;
+  --sidebar-bg: #001a41;
+  --sidebar-ink: #edf2ff;
+  --sidebar-hover: #002e6c;
+  --sidebar-active: #005ac1;
+  --card-shadow: 0 1px 2px rgba(0, 26, 65, 0.06), 0 8px 20px -8px rgba(0, 90, 193, 0.2), 0 2px 6px -2px rgba(0, 26, 65, 0.06);
+}
+
+[data-theme="material-purple"] {
+  --bg: #f6effb;
+  --paper: #ffffff;
+  --ink: #250f4c;
+  --muted: #433d51;
+  --line: #dbc8e8;
+  --primary: #6b4ea2;
+  --primary-hover: #523788;
+  --primary-soft: #f5eeff;
+  --primary-border: #c9abf5;
+  --accent: #6d5676;
+  --sidebar-bg: #250f4c;
+  --sidebar-ink: #f5eeff;
+  --sidebar-hover: #3d1c75;
+  --sidebar-active: #6b4ea2;
+  --card-shadow: 0 1px 2px rgba(37, 15, 76, 0.06), 0 8px 20px -8px rgba(107, 78, 162, 0.2), 0 2px 6px -2px rgba(37, 15, 76, 0.06);
+}
+
+[data-theme="material-terracotta"] {
+  --bg: #fbeee8;
+  --paper: #ffffff;
+  --ink: #370e00;
+  --muted: #4c3c37;
+  --line: #e6c7ba;
+  --primary: #984715;
+  --primary-hover: #7b3405;
+  --primary-soft: #ffebd8;
+  --primary-border: #f8a68a;
+  --accent: #77574e;
+  --sidebar-bg: #370e00;
+  --sidebar-ink: #ffebd8;
+  --sidebar-hover: #581c04;
+  --sidebar-active: #984715;
+  --card-shadow: 0 1px 2px rgba(55, 14, 0, 0.06), 0 8px 20px -8px rgba(152, 71, 21, 0.2), 0 2px 6px -2px rgba(55, 14, 0, 0.06);
+}
+
+[data-theme="material-dark"] {
+  --bg: #0f1311;
+  --paper: #181d1a;
+  --ink: #e3e6e1;
+  --muted: #c2cbc4;
+  --line: #3c433e;
+  --primary: #81d5a2;
+  --primary-hover: #9ee2b9;
+  --primary-soft: #182e22;
+  --primary-border: #446850;
+  --accent: #a3d3ff;
+  --sidebar-bg: #0a0d0c;
+  --sidebar-ink: #e3e6e1;
+  --sidebar-hover: #1e2420;
+  --sidebar-active: #2b553d;
+  --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
+}
+
+body {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(90rem 40rem at 88% -12%, color-mix(in srgb, var(--primary-soft) 40%, transparent), transparent 55%),
+    radial-gradient(70rem 36rem at -8% 112%, color-mix(in srgb, var(--primary) 3%, transparent), transparent 55%);
+  background-repeat: no-repeat;
+  color: var(--ink);
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+  overflow-x: hidden;
+  max-width: 100vw;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.01em;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+html:not(.dark) {
+  color-scheme: light;
+}
+
+input, select, textarea {
+  color: var(--ink);
+  background-color: var(--paper);
+  border-color: var(--line);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+input:hover, select:hover, textarea:hover {
+  border-color: color-mix(in srgb, var(--primary-border) 60%, var(--line));
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--primary);
+  outline: none;
+}
+
+select option {
+  background-color: var(--paper);
+  color: var(--ink);
+  font-weight: 700;
+  padding: 4px 8px;
+}
+
+[data-theme="dark"] select option,
+[data-theme="material-dark"] select option,
+[data-theme="obsidian"] select option,
+[data-theme="midnight"] select option,
+[data-theme="graphite"] select option,
+html.dark select option {
+  background-color: #1e293b;
+  color: #f8fafc;
+}
+
+::selection {
+  background-color: var(--primary);
+  color: #ffffff;
+}
+
+/* Fallback keyboard focus indicator for interactive elements that do not
+   declare their own focus ring (Tailwind's focus:outline-none / focus:ring-*
+   win by specificity). */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 75%, transparent);
+  outline-offset: 2px;
+}
+
+/* Prevent auto-zoom on mobile inputs and improve touch feedback */
+button, input, select, textarea, a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Custom Print Styles for Clean Share Sheet & Briefing Slide Export */
+@media print {
+  @page {
+    size: landscape;
+    margin: 4mm;
+  }
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .share-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+  .page-break-inside-avoid {
+    break-inside: avoid;
+  }
+  .page-break-before-always {
+    break-before: page;
+  }
+  .page-break-after-always {
+    break-after: page;
+  }
+  #briefing-slide-canvas {
+    width: 100vw !important;
+    height: 96vh !important;
+    max-width: none !important;
+    max-height: none !important;
+    aspect-ratio: 16/9 !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 12px !important;
+    margin: 0 auto !important;
+    page-break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-inside: avoid !important;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 32%, var(--line));
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted) 50%, var(--line));
+  background-clip: padding-box;
+}
+
+/* ============================================================
+   MARKDOWN RENDERING (Avisos, Comunicados e Avisos de rodapé)
+   ============================================================ */
+.markdown-content {
+  display: block;
+  min-width: 0;
+}
+.markdown-content > *:first-child {
+  margin-top: 0;
+}
+.markdown-content > *:last-child {
+  margin-bottom: 0;
+}
+.markdown-content p {
+  margin: 0.2em 0;
+  line-height: 1.45;
+}
+.markdown-content strong {
+  font-weight: 900;
+}
+.markdown-content em {
+  font-style: italic;
+}
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0.2em 0;
+  padding-left: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+}
+.markdown-content ul {
+  list-style: disc;
+}
+.markdown-content ol {
+  list-style: decimal;
+}
+.markdown-content li::marker {
+  font-weight: 700;
+}
+.markdown-content a {
+  text-decoration: underline;
+  font-weight: 700;
+}
+.markdown-content blockquote {
+  margin: 0.3em 0;
+  padding: 0.3em 0.75em;
+  border-left: 3px solid currentColor;
+  opacity: 0.9;
+  background: rgba(127, 127, 127, 0.08);
+  border-radius: 0 0.5rem 0.5rem 0;
+}
+.markdown-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+  background: rgba(127, 127, 127, 0.14);
+  padding: 0.05em 0.35em;
+  border-radius: 0.35em;
+}
+.markdown-content .markdown-heading {
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 1.08em;
+  margin: 0.3em 0 0.15em;
+}
+.markdown-content.markdown-on-colored code {
+  background: rgba(255, 255, 255, 0.14);
+}
+.markdown-content.markdown-on-colored blockquote {
+  background: rgba(255, 255, 255, 0.06);
+}
+

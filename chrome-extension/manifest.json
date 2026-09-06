@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Dimensio — Extensão de Gestão Operacional & Notificações",
+  "short_name": "Dimensio Extension",
+  "version": "1.0.0",
+  "description": "Extensão para Chrome do Dimensio: Notificações em segundo plano, acompanhamento de escala e atalhos operacionais.",
+  "permissions": [
+    "notifications",
+    "storage",
+    "alarms",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Dimensio — Painel Operacional Rápidos",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://docs.google.com/spreadsheets/*"
+      ],
+      "js": ["content.js"]
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
