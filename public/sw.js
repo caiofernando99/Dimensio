@@ -84,5 +84,67 @@ self.addEventListener('sync', (event) => {
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'PING_SW') {
     event.ports[0]?.postMessage({ status: 'active', bgSyncSupported: 'sync' in self.registration });
+  } else if (event.data && event.data.type === 'SHOW_NOTIFICATION') {
+    const payload = event.data.payload || {};
+    self.registration.showNotification(payload.title || 'Dimensio', {
+      body: payload.body || '',
+      icon: payload.icon || '/icons/icon-192.png',
+      badge: payload.badge || '/icons/badge-96.png',
+      tag: payload.tag || 'dimensio-bg-alert',
+      vibrate: payload.vibrate || [200, 100, 200],
+      renotify: true,
+      data: { url: payload.url || '/' },
+    });
   }
 });
+
+// Manipulador de clique em notificações no Android (abre ou foca a janela do Dimensio)
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const urlToOpen = (event.notification.data && event.notification.data.url) || '/';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      // Se houver uma janela aberta do Dimensio, foca nela
+      for (const client of clientList) {
+        if ('focus' in client) {
+          if ('navigate' in client && urlToOpen !== '/') {
+            client.navigate(urlToOpen);
+          }
+          return client.focus();
+        }
+      }
+      // Se nenhuma estiver aberta, abre uma nova janela/aba do app
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(urlToOpen);
+      }
+    })
+  );
+});
+
+// Suporte a Web Push Notifications caso configurado
+self.addEventListener('push', (event) => {
+  let data = { title: 'Dimensio Alerta', body: 'Nova notificação operacional' };
+  try {
+    if (event.data) {
+      data = event.data.json();
+    }
+  } catch {
+    if (event.data) {
+      data.body = event.data.text();
+    }
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'Dimensio', {
+      body: data.body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/badge-96.png',
+      tag: 'dimensio-push-alert',
+      vibrate: [250, 100, 250],
+      renotify: true,
+      data: { url: data.url || '/' },
+    })
+  );
+});
+

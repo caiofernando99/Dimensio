@@ -3,6 +3,7 @@ import { useApp } from './AppContext';
 import type { CommChannel, CommPeerInfo, RemotePeerState, SignalMessage, AudioMode } from '../communication/types';
 import { generateId } from '../utils/helpers';
 import { playRadioPttChirp, setRadioSfxConfig, getRadioSfxConfig } from '../utils/audioAlert';
+import { showNativeOSNotification } from '../utils/notifications';
 import { loadRadioStateDB, saveRadioStateDB } from '../utils/radioStoreDB';
 import { triggerRadioBackgroundSync } from '../registerSW';
 import {
@@ -46,6 +47,8 @@ export interface CommContextType {
   audioBlocked: boolean;
   micLevel: number;
   resumeAllAudio: () => void;
+  requestWakeLock: () => void;
+  releaseWakeLock: () => void;
   testLoopback: () => void;
   isTestingLoopback: boolean;
   onlineCollabIds: Set<string>;
@@ -121,6 +124,40 @@ interface ConnEntry {
   pendingCandidates?: RTCIceCandidateInit[];
 }
 
+function createSilentWavBlobUrl(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    const sampleRate = 16000;
+    const numSamples = sampleRate * 3; // 3 seconds loop
+    const buffer = new ArrayBuffer(44 + numSamples * 2);
+    const view = new DataView(buffer);
+    view.setUint32(0, 0x52494646, false); // "RIFF"
+    view.setUint32(4, 36 + numSamples * 2, true);
+    view.setUint32(8, 0x57415645, false); // "WAVE"
+    view.setUint32(12, 0x666d7420, false); // "fmt "
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM format (1)
+    view.setUint16(22, 1, true); // Mono (1)
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // byteRate = sampleRate * channels * 2
+    view.setUint16(32, 2, true); // blockAlign
+    view.setUint16(34, 16, true); // 16 bits per sample
+    view.setUint32(36, 0x64617461, false); // "data"
+    view.setUint32(40, numSamples * 2, true);
+
+    // 16-bit PCM: Fill with 24Hz sub-audible sine carrier with amplitude 3 out of 32767.
+    // Inaudible to human ear on phones, but active to Android Audio HAL preventing power down.
+    const i16 = new Int16Array(buffer, 44);
+    for (let i = 0; i < numSamples; i++) {
+      i16[i] = Math.round(Math.sin((2 * Math.PI * 24 * i) / sampleRate) * 3);
+    }
+    const blob = new Blob([buffer], { type: 'audio/wav' });
+    return URL.createObjectURL(blob);
+  } catch {
+    return 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+  }
+}
+
 export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { state, identifiedUser, showNotice } = useApp();
 
@@ -180,9 +217,16 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isTestingLoopback, setIsTestingLoopback] = useState(false);
 
   const instanceIdRef = useRef<string>(Math.random().toString(36).substring(2, 8));
-  const peerIdRef = useRef<string>('');
-  const peerNameRef = useRef<string>('');
-  const peerRoleRef = useRef<string>('');
+  const initialBaseId = identifiedUser ? String(identifiedUser.collaboratorId || identifiedUser.id) : 'anon';
+  const peerIdRef = useRef<string>(`${initialBaseId}#${instanceIdRef.current}`);
+  const peerNameRef = useRef<string>(identifiedUser?.name || 'Operador em Turno');
+  const peerRoleRef = useRef<string>(identifiedUser?.role || 'Operativo');
+
+  // Keep identity refs synchronized synchronously
+  const currentBaseId = identifiedUser ? String(identifiedUser.collaboratorId || identifiedUser.id) : 'anon';
+  peerIdRef.current = `${currentBaseId}#${instanceIdRef.current}`;
+  peerNameRef.current = identifiedUser?.name || 'Operador em Turno';
+  peerRoleRef.current = identifiedUser?.role || 'Operativo';
 
   const subscribedRef = useRef<string[]>([]);
   const connectionsRef = useRef<Map<string, ConnEntry>>(new Map());
@@ -237,6 +281,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   const liveStreamDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   const liveStreamSourceRef = useRef<OscillatorNode | null>(null);
   const keepaliveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const silentWavBlobUrlRef = useRef<string | null>(null);
 
   const modeRef = useRef<AudioMode>(mode);
   const mutedRef = useRef<boolean>(muted);
@@ -624,7 +669,10 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       liveStreamCtxRef.current.resume().catch(() => {});
     }
     const lEl = liveAudioElRef.current;
-    if (lEl && lEl.paused && enabledRef.current) {
+    if (lEl && enabledRef.current) {
+      if (!lEl.src && silentWavBlobUrlRef.current) {
+        lEl.src = silentWavBlobUrlRef.current;
+      }
       lEl.play().then(() => {
         setAudioBlocked(false);
       }).catch(() => {
@@ -676,45 +724,21 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       try { liveStreamCtxRef.current.close(); } catch {}
       liveStreamCtxRef.current = null;
     }
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.playbackState = 'none';
+      } catch {}
+    }
   }, []);
 
   // Background Live Broadcast Engine:
-  // Connects a continuous inaudible Web Audio oscillator (20Hz at 0.00001 gain)
-  // via createMediaStreamDestination into an HTML5 <audio autoplay playsinline loop> element.
-  // This continuous live MediaStream ensures Android AudioFlinger and iOS AVPlayer
-  // keep the background audio session, network sockets, and WebRTC audio running 24/7.
+  // Connects a continuous inaudible WAV audio loop via HTML5 <audio autoplay playsinline loop> element.
+  // This continuous live audio session ensures Android AudioFlinger keeps the background
+  // audio session, network sockets, and WebRTC audio running 24/7 without being frozen.
   const startLiveBroadcast = useCallback(() => {
     if (!enabledRef.current) return;
 
     try {
-      const AudioCtxClass =
-        window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtxClass) return;
-
-      if (!liveStreamCtxRef.current || liveStreamCtxRef.current.state === 'closed') {
-        const ctx = new AudioCtxClass();
-        liveStreamCtxRef.current = ctx;
-
-        const dest = ctx.createMediaStreamDestination();
-        liveStreamDestRef.current = dest;
-
-        const osc = ctx.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.value = 20; // Inaudible sub-bass anchor
-
-        const gain = ctx.createGain();
-        gain.gain.value = 0.00001; // Ultra sub-audible carrier
-
-        osc.connect(gain);
-        gain.connect(dest);
-        osc.start();
-        liveStreamSourceRef.current = osc;
-      }
-
-      if (liveStreamCtxRef.current.state === 'suspended') {
-        liveStreamCtxRef.current.resume().catch(() => {});
-      }
-
       let el = liveAudioElRef.current;
       if (!el) {
         el = document.createElement('audio');
@@ -731,11 +755,16 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         liveAudioElRef.current = el;
       }
 
-      if (liveStreamDestRef.current && el.srcObject !== liveStreamDestRef.current.stream) {
-        el.srcObject = liveStreamDestRef.current.stream;
+      if (!silentWavBlobUrlRef.current) {
+        silentWavBlobUrlRef.current = createSilentWavBlobUrl();
       }
 
-      el.volume = 0.01;
+      if (el.src !== silentWavBlobUrlRef.current) {
+        el.src = silentWavBlobUrlRef.current;
+      }
+
+      el.loop = true;
+      el.volume = 0.05; // Audible threshold for Android Chrome background media session
       el.muted = false;
 
       el.play().then(() => {
@@ -751,10 +780,10 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       if (!enabledRef.current) return;
       const el = liveAudioElRef.current;
       if (el && (el.paused || el.ended)) {
+        if (!el.src && silentWavBlobUrlRef.current) {
+          el.src = silentWavBlobUrlRef.current;
+        }
         el.play().then(() => setAudioBlocked(false)).catch(() => {});
-      }
-      if (liveStreamCtxRef.current && liveStreamCtxRef.current.state === 'suspended') {
-        liveStreamCtxRef.current.resume().catch(() => {});
       }
       audioElsRef.current.forEach((a) => {
         if (a.srcObject && a.paused) {
@@ -786,8 +815,15 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           requestWakeLock();
         }
       } else {
-        if (enabled && liveAudioElRef.current?.paused) {
-          liveAudioElRef.current.play().catch(() => {});
+        // Quando o app é minimizado no Android, garante que o áudio silencioso esteja tocando
+        // para manter o processo com prioridade de mídia em segundo plano (evita congelamento do SO).
+        startLiveBroadcast();
+        const lEl = liveAudioElRef.current;
+        if (enabledRef.current && lEl) {
+          if (!lEl.src && silentWavBlobUrlRef.current) {
+            lEl.src = silentWavBlobUrlRef.current;
+          }
+          lEl.play().catch(() => {});
         }
       }
     };
@@ -799,7 +835,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       window.removeEventListener('keydown', resume);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [resumeAllAudio, enabled, requestWakeLock]);
+  }, [resumeAllAudio, enabled, requestWakeLock, startLiveBroadcast]);
 
   useEffect(() => {
     if (enabled) {
@@ -820,7 +856,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         const isRemoteSpeaking = remoteTransmitting;
 
         let title = `Dimensio Talk — ${chLabel}`;
-        let artist = 'Transmissão ao vivo (Escuta ativa)';
+        let artist = 'Rádio PTT & Segundo Plano Ativo';
         if (isSpeakingNow) {
           title = `● Transmitindo voz — ${chLabel}`;
           artist = 'Você está falando ao vivo';
@@ -832,7 +868,11 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         navigator.mediaSession.metadata = new MediaMetadata({
           title,
           artist,
-          album: `Canal: ${chLabel}`,
+          album: `Canal: ${chLabel} — Dimensio`,
+          artwork: [
+            { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+            { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+          ],
         });
         navigator.mediaSession.playbackState = 'playing';
 
@@ -1168,6 +1208,9 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     [acquireMic, createPc, sendOffer]
   );
 
+  const ensureConnectionRef = useRef(ensureConnection);
+  ensureConnectionRef.current = ensureConnection;
+
   const autoJoinDirectChannel = useCallback(
     (channelId: string, hints: { senderName?: string }) => {
       if (!identifiedUser) return;
@@ -1216,6 +1259,20 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           setRemoteTransmitting(true);
           remoteTransmittingRef.current = true;
           resumeAllAudio();
+          // If the app is minimized (background on Android), notify the operator immediately
+          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+            const speaker = msg.senderName || 'Colega';
+            const chName = msg.channel.startsWith('direct:')
+              ? 'Canal Direto'
+              : msg.channel === 'geral'
+              ? 'Geral'
+              : msg.channel.replace('sector:', 'Setor: ').replace('task:', 'Tarefa: ');
+            showNativeOSNotification(`📻 ${speaker} falando no Rádio`, {
+              body: `Canal: ${chName}. Transmissão em andamento.`,
+              tag: 'dimensio-radio-speaking',
+              vibrate: [200, 100, 200],
+            });
+          }
           setRemotePeersMap((prev) => {
             const list = prev[msg.channel!] || [];
             return {
@@ -1267,6 +1324,13 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
             dismissedDirectRef.current.delete(dcCollabId);
             persistDismissedDirect();
             autoJoinDirectChannel(msg.channel, { senderName: msg.senderName });
+            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+              showNativeOSNotification(`📞 Chamada Direta — ${msg.senderName || 'Operador'}`, {
+                body: 'Chamando você em canal direto no rádio Dimensio Talk.',
+                tag: 'dimensio-radio-direct',
+                vibrate: [300, 150, 300, 150, 300],
+              });
+            }
           }
         }
         return;
@@ -1395,7 +1459,14 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           const list = (prev[channelId] || []).filter((p) => p.id !== msg.sender);
           return { ...prev, [channelId]: list };
         });
-        setRemotePeersMap((prev) => ({ ...prev }));
+        setRemotePeersMap((prev) => {
+          const list = prev[channelId];
+          if (!list || !list.some((p) => p.id === msg.sender)) return prev;
+          return {
+            ...prev,
+            [channelId]: list.filter((p) => p.id !== msg.sender),
+          };
+        });
 
         // If a direct channel was closed by the other party, clean up locally and return to Geral
         if (channelId.startsWith('direct:')) {
@@ -1421,6 +1492,9 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     [acquireMic, ensureAudioEl, awaitGathered, sendSignals, autoJoinDirectChannel, createPc]
   );
 
+  const handleSignalRef = useRef(handleSignal);
+  handleSignalRef.current = handleSignal;
+
   // BroadcastChannel for instant local cross-tab communication
   useEffect(() => {
     if (typeof BroadcastChannel !== 'undefined') {
@@ -1428,9 +1502,9 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       bc.onmessage = (e) => {
         if (e.data) {
           if (Array.isArray(e.data)) {
-            e.data.forEach((m) => handleSignal(m));
+            e.data.forEach((m) => handleSignalRef.current(m));
           } else {
-            handleSignal(e.data);
+            handleSignalRef.current(e.data);
           }
         }
       };
@@ -1440,7 +1514,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         bcRef.current = null;
       };
     }
-  }, [handleSignal]);
+  }, []);
 
   // Real-time Firebase Cloud Signaling & Presence
   useEffect(() => {
@@ -1448,17 +1522,19 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
 
     setRelayOnline(true);
 
-    const unsubscribeSignals = subscribeToFirestoreRadioSignals(peerIdRef.current, (msg) => {
-      handleSignal(msg);
+    const myPeerId = peerIdRef.current;
+    const unsubscribeSignals = subscribeToFirestoreRadioSignals(myPeerId, (msg) => {
+      handleSignalRef.current(msg);
     });
 
     const unsubscribePresence = subscribeToRadioCloudPresence((list) => {
       const now = Date.now();
+      const currentPeerId = peerIdRef.current;
       const validPeers = list.filter(
-        (p) => p && p.peerId && p.peerId !== peerIdRef.current && now - (p.lastSeen || 0) < 15000
+        (p) => p && p.peerId && p.peerId !== currentPeerId && now - (p.lastSeen || 0) < 15000
       );
 
-      setPeersMap(() => {
+      setPeersMap((prev) => {
         const next: Record<string, CommPeerInfo[]> = {};
         validPeers.forEach((p) => {
           (p.channels || []).forEach((ch) => {
@@ -1474,6 +1550,25 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
             }
           });
         });
+
+        // Fast shallow comparison to prevent unnecessary state updates
+        const prevKeys = Object.keys(prev);
+        const nextKeys = Object.keys(next);
+        if (prevKeys.length === nextKeys.length) {
+          const isSame = prevKeys.every((key) => {
+            const pList = prev[key] || [];
+            const nList = next[key] || [];
+            if (pList.length !== nList.length) return false;
+            return pList.every(
+              (p, idx) =>
+                p.id === nList[idx].id &&
+                p.name === nList[idx].name &&
+                p.role === nList[idx].role
+            );
+          });
+          if (isSame) return prev;
+        }
+
         return next;
       });
     });
@@ -1495,9 +1590,11 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       unsubscribeSignals();
       unsubscribePresence();
       clearInterval(presenceTimer);
-      removeRadioCloudPresence(peerIdRef.current);
+      if (myPeerId) {
+        removeRadioCloudPresence(myPeerId);
+      }
     };
-  }, [enabled, handleSignal]);
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled || relayWarnedRef.current) return;
@@ -1515,7 +1612,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       if (!data) return;
       if (data.type === 'polled') {
         const msgs = (data.messages as SignalMessage[]) || [];
-        msgs.forEach((m) => handleSignal(m));
+        msgs.forEach((m) => handleSignalRef.current(m));
       } else if (data.type === 'relayOnline') {
         setRelayOnline(Boolean(data.ok));
       } else if (data.type === 'tick') {
@@ -1565,7 +1662,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       worker.terminate();
       workerRef.current = null;
     };
-  }, [enabled, webhookUrl, handleSignal, state.onlineSpreadsheet?.url]);
+  }, [enabled, webhookUrl, state.onlineSpreadsheet?.url]);
 
   useEffect(() => {
     const worker = workerRef.current;
@@ -1606,17 +1703,26 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           } catch {}
           connectionsRef.current.delete(key);
           const peer = (peersMapRef.current[ch] || []).find((p) => p.id === remoteId);
-          if (peer) ensureConnection(ch, peer);
+          if (peer) ensureConnectionRef.current(ch, peer);
           return;
         }
         if (now - (entry.lastOffer || 0) < RETRY_INTERVAL_MS) return;
+        const prevStatus = entry.status;
         entry.lastOffer = now;
         entry.status = 'connecting';
         sendOffer(entry);
-        setRemotePeersMap((prev) => ({ ...prev }));
+        if (prevStatus !== 'connecting') {
+          setRemotePeersMap((prev) => {
+            const list = prev[ch] || [];
+            return {
+              ...prev,
+              [ch]: list.map((p) => (p.id === remoteId ? { ...p, active: 'connecting' } : p)),
+            };
+          });
+        }
       });
     },
-    [ensureConnection, sendOffer]
+    [sendOffer]
   );
 
   useEffect(() => {
@@ -1635,10 +1741,10 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     if (!enabled) return;
     subscribedChannels.forEach((ch) => {
       (peersMap[ch] || []).forEach((p) => {
-        ensureConnection(ch, p);
+        ensureConnectionRef.current(ch, p);
       });
     });
-  }, [enabled, subscribedChannels, peersMap, ensureConnection]);
+  }, [enabled, subscribedChannels, peersMap]);
 
   useEffect(() => {
     const next: Record<string, RemotePeerState[]> = {};
@@ -1657,7 +1763,26 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         };
       });
     });
-    setRemotePeersMap(next);
+    setRemotePeersMap((prev) => {
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      if (prevKeys.length === nextKeys.length) {
+        const isSame = prevKeys.every((key) => {
+          const pList = prev[key] || [];
+          const nList = next[key] || [];
+          if (pList.length !== nList.length) return false;
+          return pList.every(
+            (p, idx) =>
+              p.id === nList[idx].id &&
+              p.status === nList[idx].status &&
+              p.speaking === nList[idx].speaking &&
+              p.name === nList[idx].name
+          );
+        });
+        if (isSame) return prev;
+      }
+      return next;
+    });
   }, [peersMap, subscribedChannels]);
 
   useEffect(() => {
@@ -2028,6 +2153,8 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     audioBlocked,
     micLevel,
     resumeAllAudio,
+    requestWakeLock,
+    releaseWakeLock,
     testLoopback,
     isTestingLoopback,
     onlineCollabIds,

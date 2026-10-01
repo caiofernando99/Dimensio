@@ -1,0 +1,39 @@
+{
+  "id": "/",
+  "name": "Dimensio — Gestão de Escalas e Dimensionamento",
+  "short_name": "Dimensio",
+  "description": "Dimensionamento e Gestão de Equipes, Escalas, Rádio PTT e Relatórios Diários",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#090d16",
+  "background_color": "#090d16",
+  "categories": ["productivity", "business", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

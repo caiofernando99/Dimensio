@@ -29,6 +29,7 @@ import {
 import { UserIdentifyModal } from './UserIdentifyModal';
 import { UserNotificationsModal } from './UserNotificationsModal';
 import { playNotificationSound } from '../utils/audioAlert';
+import { requestNotificationPermission } from '../utils/notifications';
 
 const PTT_KEY_OPTIONS = ['Space', 'F2', 'F3', 'Z', 'X', 'C', 'V', 'B', 'T', 'G'];
 const PTT_KEY_LABELS: Record<string, string> = {
@@ -327,6 +328,23 @@ export const FloatingQuickDock: React.FC = () => {
                   >
                     <Volume2 className="w-4 h-4 shrink-0" />
                     <span>Clique para Ativar Áudio (Bloqueado pelo Navegador)</span>
+                  </button>
+                )}
+
+                {/* Device Notification Permission Banner for Android */}
+                {typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted' && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const granted = await requestNotificationPermission();
+                      if (granted) {
+                        showNotice('Notificações no dispositivo ativadas!');
+                      }
+                    }}
+                    className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[11px] rounded-xl flex items-center justify-center gap-2 shadow-md cursor-pointer"
+                  >
+                    <Bell className="w-4 h-4 shrink-0" />
+                    <span>Habilitar Notificações no Android</span>
                   </button>
                 )}
 

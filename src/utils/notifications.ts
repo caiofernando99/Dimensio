@@ -30,21 +30,22 @@ export async function showNativeOSNotification(
     tag?: string;
     badge?: string;
     url?: string;
+    vibrate?: number[];
     onClick?: () => void;
   }
 ): Promise<void> {
   if (!('Notification' in window)) return;
 
   if (Notification.permission !== 'granted') {
-    const granted = await requestNotificationPermission();
-    if (!granted) return;
+    return;
   }
 
-  const iconUrl = options?.icon || '/favicon.svg';
-  const badgeUrl = options?.badge || '/favicon.svg';
+  const iconUrl = options?.icon || '/icons/icon-192.png';
+  const badgeUrl = options?.badge || '/icons/badge-96.png';
   const notificationTag = options?.tag || 'dimensio-bg-alert';
+  const vibratePattern = options?.vibrate || [250, 100, 250];
 
-  // 1. Try Service Worker showNotification (Works in background even when page tab is closed)
+  // 1. Try Service Worker showNotification (Official way for background on Android)
   if ('serviceWorker' in navigator) {
     try {
       const registration = await navigator.serviceWorker.ready;
@@ -54,16 +55,37 @@ export async function showNativeOSNotification(
           icon: iconUrl,
           badge: badgeUrl,
           tag: notificationTag,
+          vibrate: vibratePattern,
+          renotify: true,
           data: { url: options?.url || '/' },
         } as NotificationOptions);
         return;
       }
     } catch {
-      // Fallback to standard window Notification if Service Worker fails
+      // Fallback
     }
   }
 
-  // 2. Fallback to classic window Notification API
+  // 2. Try Service Worker message post if registration is active
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    try {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'SHOW_NOTIFICATION',
+        payload: {
+          title,
+          body: options?.body || '',
+          icon: iconUrl,
+          badge: badgeUrl,
+          tag: notificationTag,
+          vibrate: vibratePattern,
+          url: options?.url || '/',
+        },
+      });
+      return;
+    } catch {}
+  }
+
+  // 3. Fallback to classic window Notification API
   try {
     const notification = new Notification(title, {
       body: options?.body,

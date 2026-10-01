@@ -9,6 +9,7 @@ import { Header } from './components/Header';
 import { FloatingToast } from './components/FloatingToast';
 import { FloatingQuickDock } from './components/FloatingQuickDock';
 import { PwaUpdatePrompt } from './components/PwaUpdatePrompt';
+import { AndroidBackgroundKeepaliveBanner } from './components/AndroidBackgroundKeepaliveBanner';
 import { OnboardingTutorial } from './components/OnboardingTutorial';
 import { SessionShiftModal } from './components/SessionShiftModal';
 import { ContextualGuide } from './components/ContextualGuide';
@@ -411,6 +412,7 @@ const MainLayout: React.FC = () => {
           standalone={isUrlStandalonePortal}
           onSwitchToManagement={isUrlStandalonePortal ? undefined : () => setCurrentView('home')}
         />
+        <AndroidBackgroundKeepaliveBanner />
         <FloatingToast />
       </Suspense>
     );
@@ -488,6 +490,9 @@ const MainLayout: React.FC = () => {
 
       {/* Central de Widgets & Personalização do Menu Lateral */}
       <WidgetsCenterModal onNavigate={setCurrentView} />
+
+      {/* Modo de operação contínua e notificações em segundo plano para Android */}
+      <AndroidBackgroundKeepaliveBanner />
 
       {/* New PWA version available → prompt reload */}
       <PwaUpdatePrompt />

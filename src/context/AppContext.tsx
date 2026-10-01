@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { AppState, AppWidgetsConfig, AuditLogEntry, AutoAssignOptions, AutoBackupInfo, AutoBackupSettings, BackupSnapshot, BreakGenerationMode, BreakRotationInfo, BreakSlot, BriefingConfig, Collaborator, DeletedCollaborator, ExtensionConfig, FeedbackConfig, IdentifiedUser, InfoHubLink, InfoHubQuickFill, InfoHubReminder, MetricDefinition, MetricReading, NotificationPreferences, OnlineSpreadsheetConfig, PresenceSyncEvent, PresenceSyncRecord, ProcessKnowledge, RoleAccessLevel, RoutineRecurrence, ScaleType, ScheduledAbsence, ScheduledTask, ScheduledTaskList, SectorDefinition, ServiceRequest, ShiftCustomConfig, ShiftGroup, SystemNotification, Task, TaskAreaCount, TeamDefinition, ThemeOption, UserPersonalPreferences, UserProfileData, UserWorkStatus } from '../types';
 import { pushStateToFirestore, subscribeToFirestoreState, fetchStateFromFirestoreOnce, saveUserProfileToFirestore, getUserProfileFromFirestore, subscribeToUserProfile, saveUserScratchpad as saveUserScratchpadToFirestore, updateUserWorkStatus as updateUserWorkStatusInFirestore } from '../lib/firestoreStorage';
 import { auth, googleProvider, signInWithPopup, getAccessToken } from '../lib/firebase';
@@ -587,7 +587,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Subscribe to real-time User Profile in Firestore whenever identifiedUser changes
   useEffect(() => {
     if (!identifiedUser) {
-      setUserProfile(null);
+      setUserProfile((prev) => (prev === null ? prev : null));
       return;
     }
 
@@ -733,7 +733,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCanUndo(true);
   };
 
-  const showNotice = (
+  const showNotice = useCallback((
     msg: string,
     actionLabel?: string | null,
     onAction?: (() => void) | null,
@@ -743,7 +743,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTimeout(() => {
       setNoticeState((prev) => (prev.message === msg ? { message: null } : prev));
     }, 7000);
-  };
+  }, []);
 
   // Helper for applying local mutations cleanly with timestamp update
   const updateLocalState = (updater: (prev: AppState) => AppState) => {
@@ -5556,13 +5556,17 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     }
   };
 
-  const fetchFromOnlineSpreadsheet = async (isSilent = false): Promise<boolean> => {
-    return fetchFromConfig(state.onlineSpreadsheet, isSilent);
-  };
+  const fetchFromOnlineSpreadsheet = useCallback(async (isSilent = false): Promise<boolean> => {
+    return fetchFromOnlineSpreadsheetRef.current(isSilent);
+  }, []);
   // Always-latest fetch function so the polling worker effect doesn't need
   // state.updatedAtMs in its deps (which would recreate the worker on every edit).
-  const fetchFromOnlineSpreadsheetRef = useRef<(isSilent?: boolean) => Promise<boolean>>(fetchFromOnlineSpreadsheet);
-  fetchFromOnlineSpreadsheetRef.current = fetchFromOnlineSpreadsheet;
+  const fetchFromOnlineSpreadsheetRef = useRef<(isSilent?: boolean) => Promise<boolean>>((isSilent = false) => {
+    return fetchFromConfig(stateRef.current.onlineSpreadsheet, isSilent);
+  });
+  fetchFromOnlineSpreadsheetRef.current = (isSilent = false) => {
+    return fetchFromConfig(stateRef.current.onlineSpreadsheet, isSilent);
+  };
 
   const syncToConfig = async (config: OnlineSpreadsheetConfig | null | undefined, isAutoSync = false): Promise<boolean> => {
     const currentConfig = config || null;

@@ -338,6 +338,16 @@ export const UserNotificationsModal: React.FC<UserNotificationsModalProps> = ({
                   <span>Testar Som</span>
                 </button>
               </div>
+
+              {/* Android Background Tip */}
+              <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-[10.5px] text-emerald-800 dark:text-emerald-300 space-y-1">
+                <div className="font-extrabold flex items-center gap-1.5">
+                  <span>📱 Operação em Segundo Plano no Android:</span>
+                </div>
+                <p className="text-[10px] leading-relaxed text-[var(--muted)]">
+                  Instale o Dimensio como app PWA (menu do navegador &gt; &ldquo;Adicionar &agrave; tela inicial&rdquo; ou &ldquo;Instalar aplicativo&rdquo;). O r&aacute;dio e as notifica&ccedil;&otilde;es contam com sess&atilde;o de &aacute;udio ativa e Service Worker cont&iacute;nuo para permanecerem funcionando quando o app for minimizado. Se o seu aparelho possuir economia agressiva de bateria (Xiaomi/Samsung), configure a bateria do aplicativo como <strong>Sem Restri&ccedil;&otilde;es</strong>.
+                </p>
+              </div>
             </div>
 
             {/* Notification Types Filter */}
