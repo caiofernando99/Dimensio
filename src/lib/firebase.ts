@@ -1,6 +1,18 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, Firestore } from 'firebase/firestore';
-import { getAuth, Auth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import {
+  getAuth,
+  Auth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile,
+  User,
+} from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Firebase client
@@ -92,7 +104,38 @@ export const logout = async () => {
   cachedAccessToken = null;
 };
 
-export { signInWithPopup, signOut, onAuthStateChanged };
+export const emailSignIn = async (email: string, pass: string): Promise<User> => {
+  const userCredential = await signInWithEmailAndPassword(auth, email.trim(), pass);
+  return userCredential.user;
+};
+
+export const emailSignUp = async (
+  email: string,
+  pass: string,
+  displayName?: string
+): Promise<User> => {
+  const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), pass);
+  if (displayName && userCredential.user) {
+    try {
+      await updateProfile(userCredential.user, { displayName });
+    } catch {}
+  }
+  return userCredential.user;
+};
+
+export const resetPassword = async (email: string): Promise<void> => {
+  await sendPasswordResetEmail(auth, email.trim());
+};
+
+export {
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile,
+};
 export type { User };
 export default app;
 

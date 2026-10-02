@@ -1,5 +1,5 @@
 import { AppState, Collaborator, Task, BreakSlot, DailyReport, ScheduledAbsence, ShiftCustomConfig, SupportTypePreset } from '../types';
-import { DEFAULT_SUPPORT_TYPES } from './initialData';
+import { DEFAULT_SUPPORT_TYPES, DEFAULT_FIRESTORE_CONFIG } from './initialData';
 import { DEFAULT_SAMPLE_TASKS, DEFAULT_TASK_LISTS } from './routineHelpers';
 
 /**
@@ -38,7 +38,7 @@ export const initialAppStateDefaults: AppState = {
   processKnowledgeList: [],
   history: [],
   dailyReports: {},
-  onlineSpreadsheet: null,
+  onlineSpreadsheet: DEFAULT_FIRESTORE_CONFIG,
   isSidebarCollapsed: false,
   showBriefingSlide: true,
   showEmployeePortal: true,

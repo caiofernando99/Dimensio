@@ -49,7 +49,7 @@ export const OnboardingSetupWizard: React.FC<OnboardingSetupWizardProps> = ({ is
   const [shiftInput, setShiftInput] = useState('');
 
   const [scaleType, setScaleType] = useState<'6x2' | 'custom'>(state.scaleType || '6x2');
-  const [scaleGroups, setScaleGroups] = useState<string[]>(state.scaleGroups || ['A', 'B', 'C', 'D']);
+  const [scaleGroups, setScaleGroups] = useState<string[]>(state.scaleGroups || []);
   const [groupInput, setGroupInput] = useState('');
 
   const [tlInput, setTlInput] = useState('');
@@ -77,7 +77,7 @@ export const OnboardingSetupWizard: React.FC<OnboardingSetupWizardProps> = ({ is
       setDraftShifts(state.shifts || []);
       setShiftInput('');
       setScaleType(state.scaleType || '6x2');
-      setScaleGroups(state.scaleGroups || ['A', 'B', 'C', 'D']);
+      setScaleGroups(state.scaleGroups || []);
       setGroupInput('');
       setTlInput('');
       setCargoInput('');
@@ -209,9 +209,6 @@ export const OnboardingSetupWizard: React.FC<OnboardingSetupWizardProps> = ({ is
       scaleType,
       scaleGroups,
     });
-    if (scaleType === '6x2' && Object.keys(state.calendar).length === 0) {
-      applySuggestedScaleCalendar(state.year);
-    }
     setSetupCompleted(true);
     showNotice('Configuração da operação concluída com sucesso!');
     onClose();

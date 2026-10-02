@@ -1,11 +1,22 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { AppState, AppWidgetsConfig, AuditLogEntry, AutoAssignOptions, AutoBackupInfo, AutoBackupSettings, BackupSnapshot, BreakGenerationMode, BreakRotationInfo, BreakSlot, BriefingConfig, Collaborator, DeletedCollaborator, ExtensionConfig, FeedbackConfig, IdentifiedUser, InfoHubLink, InfoHubQuickFill, InfoHubReminder, MetricDefinition, MetricReading, NotificationPreferences, OnlineSpreadsheetConfig, PresenceSyncEvent, PresenceSyncRecord, ProcessKnowledge, RoleAccessLevel, RoutineRecurrence, ScaleType, ScheduledAbsence, ScheduledTask, ScheduledTaskList, SectorDefinition, ServiceRequest, ShiftCustomConfig, ShiftGroup, SystemNotification, Task, TaskAreaCount, TeamDefinition, ThemeOption, UserPersonalPreferences, UserProfileData, UserWorkStatus } from '../types';
 import { pushStateToFirestore, subscribeToFirestoreState, fetchStateFromFirestoreOnce, saveUserProfileToFirestore, getUserProfileFromFirestore, subscribeToUserProfile, saveUserScratchpad as saveUserScratchpadToFirestore, updateUserWorkStatus as updateUserWorkStatusInFirestore } from '../lib/firestoreStorage';
-import { auth, googleProvider, signInWithPopup, getAccessToken } from '../lib/firebase';
+import {
+  auth,
+  googleProvider,
+  signInWithPopup,
+  getAccessToken,
+  emailSignIn,
+  emailSignUp,
+  resetPassword,
+  signOut,
+  onAuthStateChanged,
+  User,
+} from '../lib/firebase';
 import { createCalendarEvent, deleteCalendarEvent, createGoogleTask, updateGoogleTaskStatus } from '../lib/workspace';
 import { THEME_OPTIONS } from '../constants';
 import { generateId, isScaleOff, getTodayISO, formatDateBR, getCollaboratorStatus, formatPersonName, applySuggestedScale6x2, isAbsenteeismStatus, getActiveAbsence, shuffleArray, calculateRotatingBreaks, BreakRotationExecutionResult, type StatusType } from '../utils/helpers';
-import { initialAppState } from '../utils/initialData';
+import { initialAppState, DEFAULT_FIRESTORE_CONFIG } from '../utils/initialData';
 import { SAMPLE_BACKUP_STATE } from '../data/sampleBackupData';
 import { normalizeAppState } from '../utils/stateNormalizer';
 import { playNotificationSound, triggerDeviceVibration } from '../utils/audioAlert';
@@ -269,7 +280,15 @@ interface AppContextType {
   saveUserProfile: (patch: Partial<UserProfileData>) => Promise<void>;
   setUserWorkStatus: (status: UserWorkStatus, customMessage?: string) => Promise<void>;
   saveUserScratchpad: (text: string) => Promise<void>;
+  firebaseUser: User | null;
+  isAuthLoading: boolean;
   signInWithGoogleAuth: () => Promise<{ success: boolean; message: string }>;
+  signInWithEmailAuth: (email: string, pass: string) => Promise<{ success: boolean; message: string }>;
+  signUpWithEmailAuth: (email: string, pass: string, displayName?: string, companyName?: string) => Promise<{ success: boolean; message: string }>;
+  sendPasswordResetEmailAuth: (email: string) => Promise<{ success: boolean; message: string }>;
+  signOutAuth: () => Promise<void>;
+  registerCompanyWorkspace: (companyName: string, sector?: string, location?: string) => Promise<void>;
+  isFirestoreActive: boolean;
   linkCollaboratorWithAuth: (collaboratorId: string) => Promise<{ success: boolean; message: string }>;
 
   // Gestão Multissetorial e Conexão Intersetorial
@@ -580,6 +599,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // ignore
     }
   }, [identifiedUser]);
+
+  // Firebase Auth State
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+
+  // Monitor Firebase Auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user);
+      setIsAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // User Profile State (sincronizado em tempo real com o Firestore)
   const [userProfile, setUserProfile] = useState<UserProfileData | null>(null);
@@ -3011,6 +3043,7 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       teamShift: '',
       shifts: [],
       scaleGroups: [],
+      calendar: {},
       shiftConfigs: {},
       collaborators: [],
       deletedCollaborators: [],
@@ -3792,89 +3825,202 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     await saveUserScratchpadToFirestore(uid, text);
   };
 
+  const registerCompanyWorkspace = async (companyName: string, sector?: string, location?: string): Promise<void> => {
+    const compName = companyName.trim();
+    if (!compName) return;
+
+    // Configura a empresa de forma persistente com Firestore ativo
+    updateLocalState((prev) => ({
+      ...prev,
+      teamName: compName,
+      sector: sector || prev.sector || 'Operação',
+      location: location || prev.location || '',
+      isSetupCompleted: true,
+      onlineSpreadsheet: {
+        ...(prev.onlineSpreadsheet || DEFAULT_FIRESTORE_CONFIG),
+        name: compName,
+        databaseProvider: 'firestore',
+        firestoreCollection: 'dimensio_workspaces',
+        autoSyncEnabled: true,
+        syncStatus: 'success',
+      },
+    }));
+
+    addAuditLog('configuracao', `Empresa/Workspace "${compName}" configurada e ativada no Firestore em Nuvem.`);
+    showNotice(`Empresa "${compName}" configurada com sucesso na Nuvem!`, undefined, undefined, 'success');
+  };
+
+  const syncUserSessionFromFirebaseAuth = async (
+    fbUser: User,
+    customCompanyName?: string
+  ): Promise<{ success: boolean; message: string }> => {
+    const email = fbUser.email || '';
+    const displayName = fbUser.displayName || email.split('@')[0] || 'Usuário';
+    const photoUrl = fbUser.photoURL || undefined;
+    const uid = fbUser.uid;
+
+    setFirebaseUser(fbUser);
+
+    // Try matching collaborator by email prefix, registration or name
+    const emailPrefix = email.split('@')[0].toLowerCase();
+    const col = state.collaborators.find((c) => {
+      return (
+        (c.login && c.login.toLowerCase() === emailPrefix) ||
+        (c.registration && c.registration.toLowerCase() === emailPrefix) ||
+        (c.name && c.name.toLowerCase().trim() === displayName.toLowerCase().trim())
+      );
+    });
+
+    const isFirstUser = state.collaborators.length === 0;
+    const role = col ? col.role : isFirstUser ? 'Admin' : 'Operador';
+    const shift = col?.shift || state.teamShift || 'T1';
+    const sector = col?.sector || state.sector || 'Operação';
+    const allowedSectors = col?.allowedSectors || [];
+    const canProvideCrossSectorSupport = col?.canProvideCrossSectorSupport ?? false;
+    const isEditorRole = col ? (state.editorRoles || ['TL', 'PS']).includes(role) || role === 'TL' || role === 'Admin' : isFirstUser;
+    const isAdminRole = role === 'Admin' || role === 'TL' || isFirstUser;
+
+    const existingProfile = await getUserProfileFromFirestore(uid);
+
+    const userObj: IdentifiedUser = {
+      id: uid,
+      firebaseUid: uid,
+      email,
+      name: displayName,
+      role: existingProfile?.role || role,
+      shift: existingProfile?.shift || shift,
+      category: existingProfile?.category || col?.category || 'Geral',
+      sector: existingProfile?.sector || sector,
+      allowedSectors: existingProfile?.allowedSectors || allowedSectors,
+      canProvideCrossSectorSupport: existingProfile?.canProvideCrossSectorSupport ?? canProvideCrossSectorSupport,
+      isEditor: isEditorRole,
+      isAdmin: isAdminRole,
+      accessLevel: isAdminRole ? 'admin' : isEditorRole ? 'editor' : 'portal',
+      collaboratorId: col ? col.id : undefined,
+      photoUrl: photoUrl || existingProfile?.photoUrl,
+      isSupportAttendant: existingProfile?.isSupportAttendant ?? false,
+      workStatus: existingProfile?.workStatus || 'disponivel',
+      statusCustomMessage: existingProfile?.statusCustomMessage || '',
+      identifiedAt: Date.now(),
+    };
+
+    setIdentifiedUser(userObj);
+
+    const fullProfile: UserProfileData = {
+      uid,
+      email,
+      displayName,
+      photoUrl: userObj.photoUrl,
+      collaboratorId: col ? col.id : undefined,
+      role: userObj.role,
+      shift: userObj.shift,
+      category: userObj.category,
+      sector: userObj.sector,
+      allowedSectors: userObj.allowedSectors,
+      canProvideCrossSectorSupport: userObj.canProvideCrossSectorSupport,
+      isSupportAttendant: userObj.isSupportAttendant,
+      workStatus: userObj.workStatus,
+      statusCustomMessage: userObj.statusCustomMessage,
+    };
+
+    setUserProfile(fullProfile);
+    await saveUserProfileToFirestore(fullProfile);
+
+    // If companyName was provided during sign up or first registration, initialize the enterprise workspace
+    if (customCompanyName && customCompanyName.trim()) {
+      await registerCompanyWorkspace(customCompanyName.trim(), userObj.sector);
+    }
+
+    addAuditLog('configuracao', `Usuário "${displayName}" conectou-se via Firebase Auth (Setor: ${userObj.sector || 'Operação'}).`);
+    showNotice(`Autenticado com sucesso: ${displayName}${userObj.sector ? ` • ${userObj.sector}` : ''}`, undefined, undefined, 'success');
+    return { success: true, message: `Bem-vindo, ${displayName}!` };
+  };
+
   const signInWithGoogleAuth = async (): Promise<{ success: boolean; message: string }> => {
     try {
+      setIsAuthLoading(true);
       const result = await signInWithPopup(auth, googleProvider);
       const fbUser = result.user;
       if (!fbUser) return { success: false, message: 'Não foi possível autenticar com o Google.' };
-
-      const email = fbUser.email || '';
-      const displayName = fbUser.displayName || 'Usuário Google';
-      const photoUrl = fbUser.photoURL || undefined;
-      const uid = fbUser.uid;
-
-      // Try matching collaborator by email prefix, registration or name
-      const emailPrefix = email.split('@')[0].toLowerCase();
-      let col = state.collaborators.find((c) => {
-        return (
-          (c.login && c.login.toLowerCase() === emailPrefix) ||
-          (c.registration && c.registration.toLowerCase() === emailPrefix) ||
-          (c.name && c.name.toLowerCase().trim() === displayName.toLowerCase().trim())
-        );
-      });
-
-      const role = col ? col.role : 'Operador';
-      const shift = col?.shift || state.teamShift || 'T2';
-      const sector = col?.sector || state.sector || 'Operação';
-      const allowedSectors = col?.allowedSectors || [];
-      const canProvideCrossSectorSupport = col?.canProvideCrossSectorSupport ?? false;
-      const isEditorRole = col ? (state.editorRoles || ['TL', 'PS']).includes(role) || role === 'TL' || role === 'Admin' : false;
-      const isAdminRole = role === 'Admin' || role === 'TL';
-
-      const existingProfile = await getUserProfileFromFirestore(uid);
-
-      const userObj: IdentifiedUser = {
-        id: uid,
-        firebaseUid: uid,
-        email,
-        name: displayName,
-        role: existingProfile?.role || role,
-        shift: existingProfile?.shift || shift,
-        category: existingProfile?.category || col?.category || 'Geral',
-        sector: existingProfile?.sector || sector,
-        allowedSectors: existingProfile?.allowedSectors || allowedSectors,
-        canProvideCrossSectorSupport: existingProfile?.canProvideCrossSectorSupport ?? canProvideCrossSectorSupport,
-        isEditor: isEditorRole,
-        isAdmin: isAdminRole,
-        accessLevel: isAdminRole ? 'admin' : isEditorRole ? 'editor' : 'portal',
-        collaboratorId: col ? col.id : undefined,
-        photoUrl: photoUrl || existingProfile?.photoUrl,
-        isSupportAttendant: existingProfile?.isSupportAttendant ?? false,
-        workStatus: existingProfile?.workStatus || 'disponivel',
-        statusCustomMessage: existingProfile?.statusCustomMessage || '',
-        identifiedAt: Date.now(),
-      };
-
-      setIdentifiedUser(userObj);
-
-      const fullProfile: UserProfileData = {
-        uid,
-        email,
-        displayName,
-        photoUrl: userObj.photoUrl,
-        collaboratorId: col ? col.id : undefined,
-        role: userObj.role,
-        shift: userObj.shift,
-        category: userObj.category,
-        sector: userObj.sector,
-        allowedSectors: userObj.allowedSectors,
-        canProvideCrossSectorSupport: userObj.canProvideCrossSectorSupport,
-        isSupportAttendant: userObj.isSupportAttendant,
-        workStatus: userObj.workStatus,
-        statusCustomMessage: userObj.statusCustomMessage,
-      };
-
-      setUserProfile(fullProfile);
-      await saveUserProfileToFirestore(fullProfile);
-
-      addAuditLog('configuracao', `Usuário "${displayName}" conectou-se via Conta Google / Firebase (Setor: ${userObj.sector || 'Operação'}).`);
-      showNotice(`Autenticado com sucesso: ${displayName}${userObj.sector ? ` • ${userObj.sector}` : ''}`);
-      return { success: true, message: `Bem-vindo, ${displayName}!` };
+      return await syncUserSessionFromFirebaseAuth(fbUser);
     } catch (err: any) {
       console.error('Google Sign-in error:', err);
       return { success: false, message: err?.message || 'Falha ao autenticar com o Google.' };
+    } finally {
+      setIsAuthLoading(false);
     }
   };
+
+  const signInWithEmailAuth = async (email: string, pass: string): Promise<{ success: boolean; message: string }> => {
+    try {
+      setIsAuthLoading(true);
+      const user = await emailSignIn(email, pass);
+      return await syncUserSessionFromFirebaseAuth(user);
+    } catch (err: any) {
+      console.error('Email sign in error:', err);
+      let msg = err?.message || 'Falha ao entrar com e-mail e senha.';
+      if (err?.code === 'auth/invalid-credential' || err?.code === 'auth/wrong-password') {
+        msg = 'E-mail ou senha incorretos.';
+      } else if (err?.code === 'auth/user-not-found') {
+        msg = 'Usuário não encontrado. Verifique o e-mail digitado ou crie uma conta.';
+      } else if (err?.code === 'auth/invalid-email') {
+        msg = 'Formato de e-mail inválido.';
+      }
+      return { success: false, message: msg };
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const signUpWithEmailAuth = async (
+    email: string,
+    pass: string,
+    displayName?: string,
+    companyName?: string
+  ): Promise<{ success: boolean; message: string }> => {
+    try {
+      setIsAuthLoading(true);
+      const user = await emailSignUp(email, pass, displayName);
+      return await syncUserSessionFromFirebaseAuth(user, companyName);
+    } catch (err: any) {
+      console.error('Email sign up error:', err);
+      let msg = err?.message || 'Falha ao cadastrar usuário.';
+      if (err?.code === 'auth/email-already-in-use') {
+        msg = 'Este e-mail já está cadastrado. Faça login ou recupere sua senha.';
+      } else if (err?.code === 'auth/weak-password') {
+        msg = 'A senha deve ter no mínimo 6 caracteres.';
+      }
+      return { success: false, message: msg };
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const sendPasswordResetEmailAuth = async (email: string): Promise<{ success: boolean; message: string }> => {
+    try {
+      await resetPassword(email);
+      return { success: true, message: 'Link para redefinição enviado com sucesso! Verifique sua caixa de entrada.' };
+    } catch (err: any) {
+      console.error('Password reset error:', err);
+      return { success: false, message: err?.message || 'Erro ao enviar redefinição de senha.' };
+    }
+  };
+
+  const signOutAuth = async (): Promise<void> => {
+    try {
+      await signOut(auth);
+      setFirebaseUser(null);
+      logoutUser();
+      showNotice('Sessão desconectada com sucesso.');
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+  };
+
+  const isFirestoreActive = Boolean(
+    state.onlineSpreadsheet?.databaseProvider === 'firestore' ||
+    (state.onlineSpreadsheet?.firestoreCollection && !state.onlineSpreadsheet?.webhookUrl)
+  );
 
   const linkCollaboratorWithAuth = async (collaboratorId: string): Promise<{ success: boolean; message: string }> => {
     const col = state.collaborators.find((c) => c.id === collaboratorId);
@@ -7393,7 +7539,15 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
         saveUserProfile,
         setUserWorkStatus,
         saveUserScratchpad,
+        firebaseUser,
+        isAuthLoading,
         signInWithGoogleAuth,
+        signInWithEmailAuth,
+        signUpWithEmailAuth,
+        sendPasswordResetEmailAuth,
+        signOutAuth,
+        registerCompanyWorkspace,
+        isFirestoreActive,
         linkCollaboratorWithAuth,
         addRegisteredSector,
         removeRegisteredSector,

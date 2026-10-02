@@ -2,6 +2,8 @@
  * Utilitário de Registro e Gestão do Service Worker com Background Sync API e Verificação Contínua de Versões.
  */
 
+import { initSwDiagnostics } from './utils/swDiagnostics';
+
 let swRegistration: ServiceWorkerRegistration | null = null;
 
 export async function checkForAppUpdates(): Promise<boolean> {
@@ -42,6 +44,9 @@ export async function registerSW(): Promise<ServiceWorkerRegistration | null> {
     const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
     swRegistration = reg;
     console.log('[SW] Service Worker registrado com sucesso:', reg.scope);
+
+    // Inicializa o utilitário de diagnóstico contínuo de heartbeats e background sync
+    initSwDiagnostics();
 
     // Se já existia um worker aguardando quando o app foi aberto:
     if (reg.waiting && navigator.serviceWorker.controller) {

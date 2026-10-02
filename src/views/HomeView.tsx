@@ -259,45 +259,27 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
             <div className="bg-gradient-to-r from-violet-500/10 via-indigo-500/10 to-transparent border border-violet-500/20 p-5 rounded-2xl space-y-3">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-violet-600 text-white flex items-center justify-center font-black shadow-sm shrink-0">
-                    <Sparkles className="w-5 h-5" />
+                  <div className="w-10 h-10 rounded-xl bg-[var(--primary)] text-white flex items-center justify-center font-black shadow-sm shrink-0">
+                    <Users className="w-5 h-5" />
                   </div>
                   <div>
                     <h3 className="text-sm font-black text-[var(--ink)]">
-                      Sistema Pronto em Estado Limpo
+                      Sua operação está pronta para ser configurada
                     </h3>
                     <p className="text-xs text-[var(--muted)] font-medium">
-                      Nenhum colaborador ou cargo pré-cadastrado. Inicie com seus dados reais ou carregue a base de testes para homologação.
+                      Ambiente limpo e dedicado. Cadastre os turnos, cargos e membros da sua equipe para iniciar o dimensionamento.
                     </p>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => loadSampleBackupData()}
-                    className="px-3.5 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-black rounded-xl flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-                  >
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>Carregar Exemplos</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => downloadSampleBackupFile()}
-                    className="px-3.5 py-2 bg-[var(--paper)] hover:bg-[var(--bg)] border border-[var(--line)] text-[var(--ink)] text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Baixar Backup JSON</span>
-                  </button>
-
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => openSetupWizard()}
-                    className="px-3.5 py-2 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-white text-xs font-black rounded-xl flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                    className="px-4 py-2 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-white text-xs font-black rounded-xl flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
                   >
                     <SlidersHorizontal className="w-3.5 h-3.5" />
-                    <span>Configurar Operação</span>
+                    <span>Configurar Equipe e Turnos</span>
                   </button>
                 </div>
               </div>

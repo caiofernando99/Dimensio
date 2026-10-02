@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { FileSpreadsheet, Link as LinkIcon, Download, Check, X, Shield, RefreshCw, Code2 } from 'lucide-react';
+import { FileSpreadsheet, Link as LinkIcon, Download, Check, X, Shield, RefreshCw, Code2, Cloud, Sparkles } from 'lucide-react';
 import { AppsScriptModal } from './AppsScriptModal';
+import { DEFAULT_FIRESTORE_CONFIG } from '../utils/initialData';
 
 interface ConnectSpreadsheetModalProps {
   isOpen: boolean;
@@ -127,6 +128,36 @@ export const ConnectSpreadsheetModal: React.FC<ConnectSpreadsheetModalProps> = (
           >
             <X className="w-5 h-5" aria-hidden="true" />
           </button>
+        </div>
+
+        {/* Firestore Direct Activation Option */}
+        <div className="p-5 pb-0">
+          <div className="bg-gradient-to-r from-indigo-50 to-blue-50 dark:from-indigo-950/40 dark:to-blue-950/40 border border-indigo-200 dark:border-indigo-800 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <div className="text-xs font-black text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                Nuvem Automática Dimensio (Firebase Firestore)
+              </div>
+              <p className="text-[11px] text-indigo-700/80 dark:text-indigo-300/80 font-medium">
+                Sem planilhas ou webhooks. Sincronização em tempo real entre todos os aparelhos e computadores.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setOnlineSpreadsheetConfig({
+                  ...DEFAULT_FIRESTORE_CONFIG,
+                  name: state.teamName ? `${state.teamName} (Nuvem)` : 'Nuvem Dimensio',
+                }, true);
+                showNotice('Nuvem Firebase Firestore ativada com sucesso!');
+                onClose();
+              }}
+              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-lg flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer transition-colors"
+            >
+              <Cloud className="w-3.5 h-3.5" />
+              Ativar Nuvem Firestore
+            </button>
+          </div>
         </div>
 
         {/* Body Form */}

@@ -1511,73 +1511,37 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
-          {/* Pacote de Dados de Exemplo & Limpeza de Estado */}
+          {/* Limpeza de Estado & Reset para Operação */}
           <div className="bg-[var(--paper)] border border-[var(--line)] p-5 rounded-2xl space-y-4 shadow-2xs">
             <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400 flex items-center justify-center font-black shrink-0">
-                  <Sparkles className="w-4 h-4" />
+                <div className="w-8 h-8 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center font-black shrink-0">
+                  <Trash2 className="w-4 h-4" />
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-[var(--ink)]">
-                    Dados de Exemplo para Testes & Homologação
+                    Gerenciamento & Limpeza de Dados da Operação
                   </h3>
                   <p className="text-xs text-[var(--muted)]">
-                    O aplicativo opera por padrão em estado limpo. Use os botões abaixo para injetar dados de exemplo ou exportar o arquivo de backup.
+                    Permite resetar o ambiente para um estado 100% limpo quando for necessário reiniciar a configuração.
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!checkPermissionOrAlert()) return;
-                  loadSampleBackupData();
-                }}
-                className="p-4 bg-[var(--bg)] hover:bg-[var(--line)]/50 border border-[var(--line)] rounded-xl flex flex-col items-start gap-2 text-left transition-all cursor-pointer group"
-              >
-                <div className="flex items-center gap-2 text-violet-600 dark:text-violet-400 font-extrabold text-xs">
-                  <Upload className="w-4 h-4 group-hover:translate-y-[-1px] transition-transform" />
-                  <span>Carregar Exemplos no App</span>
-                </div>
-                <p className="text-[11px] text-[var(--muted)] leading-relaxed">
-                  Injeta 16 colaboradores, 5 turnos (T1 a T5), 4 turmas (A, B, C, D), postos, rotinas e matriz de habilidades para testes imediatos.
-                </p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => downloadSampleBackupFile()}
-                className="p-4 bg-[var(--bg)] hover:bg-[var(--line)]/50 border border-[var(--line)] rounded-xl flex flex-col items-start gap-2 text-left transition-all cursor-pointer group"
-              >
-                <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 font-extrabold text-xs">
-                  <Download className="w-4 h-4 group-hover:translate-y-[1px] transition-transform" />
-                  <span>Baixar Arquivo JSON de Backup</span>
-                </div>
-                <p className="text-[11px] text-[var(--muted)] leading-relaxed">
-                  Baixa o arquivo <code className="font-mono text-[10px]">backup_exemplos_dimensio.json</code> para inspeção, arquivo local ou importação futura.
-                </p>
-              </button>
-
+            <div className="pt-1">
               <button
                 type="button"
                 onClick={() => {
                   if (!checkPermissionOrAlert(true)) return;
-                  if (window.confirm('Tem certeza de que deseja remover todos os colaboradores, cargos, turnos e dados cadastrados? Um ponto de restauração de segurança será criado antes da limpeza.')) {
+                  if (window.confirm('Tem certeza de que deseja remover todos os colaboradores, cargos, turnos e postos? Um ponto de restauração de segurança será criado antes da limpeza.')) {
                     clearSampleData();
                   }
                 }}
-                className="p-4 bg-rose-500/5 hover:bg-rose-500/10 border border-rose-500/20 rounded-xl flex flex-col items-start gap-2 text-left transition-all cursor-pointer group"
+                className="w-full sm:w-auto px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-500/30 rounded-xl flex items-center justify-center gap-2 text-xs font-black transition-all cursor-pointer"
               >
-                <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 font-extrabold text-xs">
-                  <Trash2 className="w-4 h-4 group-hover:scale-105 transition-transform" />
-                  <span>Limpar Todos os Dados</span>
-                </div>
-                <p className="text-[11px] text-[var(--muted)] leading-relaxed">
-                  Remove colaboradores, cargos, turnos e postos cadastrados, retornando a aplicação ao estado inicial totalmente limpo.
-                </p>
+                <Trash2 className="w-4 h-4" />
+                <span>Limpar e Resetar Todos os Dados da Operação</span>
               </button>
             </div>
           </div>

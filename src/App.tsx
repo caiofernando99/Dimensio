@@ -401,7 +401,8 @@ const MainLayout: React.FC = () => {
   if (alwaysOnlineBlocked) {
     return <AlwaysOnlineOverlay onConnectCloud={() => setIsCloudConnectOpen(true)} />;
   }
-  if (sessionConfig.allowAnonymousAccess === false && !identifiedUser) {
+  // TELA INICIAL DEDICADA: primeiro login, cadastro e apresentação dos recursos
+  if (!identifiedUser && !isUrlStandalonePortal) {
     return <LoginScreen onConnectCloud={() => setIsCloudConnectOpen(true)} />;
   }
 

@@ -4,6 +4,7 @@ import { Calendar as CalendarIcon, Menu, Cloud, UserCheck, Bell, User, Clock, Gl
 import { GlobalSearch } from './GlobalSearch';
 import { UserIdentifyModal } from './UserIdentifyModal';
 import { UserNotificationsModal } from './UserNotificationsModal';
+import { SwDiagnosticIndicator } from './SwDiagnosticIndicator';
 import { updateCloudPresence, subscribeToCloudPresence, CloudPresenceUser } from '../lib/firestoreStorage';
 
 interface HeaderProps {
@@ -154,6 +155,9 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
               />
             )}
           </span>
+
+          {/* Service Worker Background Sync Diagnostic Indicator */}
+          <SwDiagnosticIndicator />
 
           {/* User Identify */}
           <button

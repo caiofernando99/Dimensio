@@ -1,7 +1,16 @@
-import { AppState, SupportTypePreset } from '../types';
+import { AppState, SupportTypePreset, OnlineSpreadsheetConfig } from '../types';
 import { DEFAULT_TASK_LISTS } from './routineHelpers';
 import { getTodayISO } from './helpers';
-import { SUGGESTED_CALENDAR_2026 } from './suggestedScale';
+
+export const DEFAULT_FIRESTORE_CONFIG: OnlineSpreadsheetConfig = {
+  url: '',
+  webhookUrl: '',
+  name: 'Nuvem Dimensio (Firestore)',
+  syncStatus: 'success',
+  autoSyncEnabled: true,
+  databaseProvider: 'firestore',
+  firestoreCollection: 'dimensio_workspaces',
+};
 
 export const DEFAULT_SUPPORT_TYPES: SupportTypePreset[] = [
   {
@@ -118,9 +127,7 @@ export const initialAppState: AppState = {
   selectedDate: getTodayISO(),
   theme: 'dimensio',
   requireUserPassword: false,
-  calendar: {
-    ...SUGGESTED_CALENDAR_2026,
-  },
+  calendar: {},
   collaborators: [],
   deletedCollaborators: [],
   tasks: [],
@@ -129,7 +136,7 @@ export const initialAppState: AppState = {
   intervals: {},
   history: [],
   dailyReports: {},
-  onlineSpreadsheet: null,
+  onlineSpreadsheet: DEFAULT_FIRESTORE_CONFIG,
   processKnowledgeList: [],
   showBriefingSlide: true,
   showEmployeePortal: true,
