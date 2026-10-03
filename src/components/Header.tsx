@@ -6,6 +6,7 @@ import { UserIdentifyModal } from './UserIdentifyModal';
 import { UserNotificationsModal } from './UserNotificationsModal';
 import { SwDiagnosticIndicator } from './SwDiagnosticIndicator';
 import { updateCloudPresence, subscribeToCloudPresence, CloudPresenceUser } from '../lib/firestoreStorage';
+import { useI18n } from '../i18n';
 
 interface HeaderProps {
   pageTitle: string;
@@ -16,6 +17,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggleMobileMenu, onOpenShiftModal }) => {
   const { state, setDate, identifiedUser, getUnreadNotificationsCount } = useApp();
+  const { language, setLanguage, availableLanguages } = useI18n();
   const [isIdentifyModalOpen, setIsIdentifyModalOpen] = useState(false);
   const [isNotifModalOpen, setIsNotifModalOpen] = useState(false);
   const [onlineLeaders, setOnlineLeaders] = useState<CloudPresenceUser[]>([]);
@@ -177,6 +179,23 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
             )}
             <span className="max-w-[70px] truncate">{identifiedUser ? identifiedUser.name : 'Identificar'}</span>
           </button>
+
+          {/* Language Selector */}
+          <div className="relative flex items-center shrink-0">
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as any)}
+              className="px-2 py-1 rounded-lg border border-[var(--line)] bg-[var(--bg)] text-[10.5px] font-black text-[var(--ink)] outline-none hover:border-[var(--primary)] transition-colors cursor-pointer appearance-none shadow-2xs"
+              aria-label="Idioma do Sistema"
+              title="Alterar idioma da plataforma (PT / ES / EN)"
+            >
+              {availableLanguages.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.flag} {l.code.toUpperCase()}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {/* Notifications */}
           <button

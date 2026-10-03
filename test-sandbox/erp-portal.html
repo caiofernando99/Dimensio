@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CorpERP — Portal Corporativo de Gestão de Ponto & Presença</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f8fafc; color: #0f172a; }
+  </style>
+</head>
+<body class="p-4 sm:p-6">
+  <!-- ERP Top Header -->
+  <div class="max-w-6xl mx-auto bg-slate-800 text-white p-4 rounded-xl flex items-center justify-between shadow-md mb-6">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center font-bold text-sm">ERP</div>
+      <div>
+        <div class="text-sm font-black tracking-wide">CORPERP CLOUD · MÓDULO PONTO ELETRÔNICO & RH</div>
+        <div class="text-[11px] text-slate-400">Integração Externa com Dimensio API REST</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-3 text-xs">
+      <a href="/test-sandbox/index.html" class="text-slate-400 hover:text-white text-xs">← Voltar ao Sandbox</a>
+    </div>
+  </div>
+
+  <main class="max-w-6xl mx-auto space-y-6">
+    <!-- Webhook Integration Control Card -->
+    <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="text-sm font-black text-slate-800 flex items-center gap-2">
+            <span>🌐</span>
+            <span>Sincronização ERP ⇄ Dimensio API de Presença</span>
+          </h2>
+          <p class="text-xs text-slate-500">
+            Envie batidas de ponto simuladas para atualizar o painel de presença do Dimensio em tempo real.
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="syncAllRecordsToDimensio()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition-colors shadow-xs">
+            Sincronizar Lote (POST /batch-sync)
+          </button>
+        </div>
+      </div>
+
+      <div id="erpSyncResult" class="hidden p-3 rounded-lg text-xs font-mono"></div>
+    </div>
+
+    <!-- Employee Roster Table -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+      <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+        <h3 class="text-xs font-black uppercase tracking-wider text-slate-700">
+          Espelho de Ponto do Dia (Colaboradores Corporativos)
+        </h3>
+        <span class="text-[11px] text-slate-500">Clique em "Bipar Entrada" para disparar webhook individual</span>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-100 text-slate-600 border-b border-slate-200">
+            <tr>
+              <th class="p-3 font-bold">Matrícula</th>
+              <th class="p-3 font-bold">Nome Completo</th>
+              <th class="p-3 font-bold">Cargo</th>
+              <th class="p-3 font-bold">Turno</th>
+              <th class="p-3 font-bold">Status no ERP</th>
+              <th class="p-3 font-bold text-right">Ação Webhook</th>
+            </tr>
+          </thead>
+          <tbody id="erpTableBody" class="divide-y divide-slate-100 text-slate-700">
+            <!-- Dynamically populated or static rows -->
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold">RE-1001</td>
+              <td class="p-3 font-bold">Carlos Silva Santos</td>
+              <td class="p-3">Operador de Empilhadeira</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-bold">T1</span></td>
+              <td class="p-3 text-emerald-600 font-bold">Ponto Registrado (06:02)</td>
+              <td class="p-3 text-right">
+                <button onclick="sendSingleWebhook('Carlos Silva Santos', 'RE-1001', 'T1', 'presente')" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-bold">
+                  Bipar Presente
+                </button>
+              </td>
+            </tr>
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold">RE-1002</td>
+              <td class="p-3 font-bold">Mariana Costa Pereira</td>
+              <td class="p-3">Conferente Líder</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[10px] font-bold">T2</span></td>
+              <td class="p-3 text-amber-600 font-bold">Entrada em Atraso (14:15)</td>
+              <td class="p-3 text-right">
+                <button onclick="sendSingleWebhook('Mariana Costa Pereira', 'RE-1002', 'T2', 'atraso')" class="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[11px] font-bold">
+                  Bipar Atraso
+                </button>
+              </td>
+            </tr>
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold">RE-1003</td>
+              <td class="p-3 font-bold">Bruno Henrique Ramos</td>
+              <td class="p-3">Operador Logístico</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-bold">T1</span></td>
+              <td class="p-3 text-rose-600 font-bold">Atestado Médico (CID J06)</td>
+              <td class="p-3 text-right">
+                <button onclick="sendSingleWebhook('Bruno Henrique Ramos', 'RE-1003', 'T1', 'atestado')" class="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[11px] font-bold">
+                  Bipar Atestado
+                </button>
+              </td>
+            </tr>
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold">RE-1004</td>
+              <td class="p-3 font-bold">Fernanda Lima Ribeiro</td>
+              <td class="p-3">Analista de Qualidade</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-purple-100 text-purple-800 text-[10px] font-bold">T3</span></td>
+              <td class="p-3 text-blue-600 font-bold">Folga Escala 6x2</td>
+              <td class="p-3 text-right">
+                <button onclick="sendSingleWebhook('Fernanda Lima Ribeiro', 'RE-1004', 'T3', 'folga')" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[11px] font-bold">
+                  Bipar Folga
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function showResult(msg, isOk) {
+      const box = document.getElementById('erpSyncResult');
+      box.className = isOk 
+        ? 'p-3 rounded-lg text-xs font-mono bg-emerald-50 text-emerald-800 border border-emerald-200' 
+        : 'p-3 rounded-lg text-xs font-mono bg-rose-50 text-rose-800 border border-rose-200';
+      box.innerText = msg;
+      box.classList.remove('hidden');
+    }
+
+    async function sendSingleWebhook(name, re, shift, status) {
+      try {
+        const res = await fetch('/api/presence/webhook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            registration: re,
+            shift,
+            status,
+            source: 'CorpERP-Ponto',
+            timestamp: Date.now()
+          })
+        });
+        const json = await res.json();
+        showResult(`Webhook enviado com sucesso para ${name} (${status})! Servidor respondeu: ${JSON.stringify(json)}`, true);
+      } catch (err) {
+        showResult(`Erro ao enviar webhook: ${err.message}`, false);
+      }
+    }
+
+    async function syncAllRecordsToDimensio() {
+      try {
+        const batch = [
+          { name: 'Carlos Silva Santos', registration: 'RE-1001', shift: 'T1', status: 'presente' },
+          { name: 'Mariana Costa Pereira', registration: 'RE-1002', shift: 'T2', status: 'atraso' },
+          { name: 'Bruno Henrique Ramos', registration: 'RE-1003', shift: 'T1', status: 'atestado' },
+          { name: 'Fernanda Lima Ribeiro', registration: 'RE-1004', shift: 'T3', status: 'folga' },
+        ];
+        const res = await fetch('/api/presence/batch-sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            records: batch,
+            source: 'CorpERP-Lote'
+          })
+        });
+        const json = await res.json();
+        showResult(`Sincronização em lote finalizada! ${batch.length} registros processados.`, true);
+      } catch (err) {
+        showResult(`Erro no envio em lote: ${err.message}`, false);
+      }
+    }
+  </script>
+</body>
+</html>

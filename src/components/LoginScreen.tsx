@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { DimensioLogo, DimensioMonogram } from './DimensioLogo';
+import { useI18n } from '../i18n';
 import {
   Search,
   Lock,
@@ -24,6 +26,7 @@ import {
   Zap,
   Users,
   Check,
+  Globe,
 } from 'lucide-react';
 
 interface LoginScreenProps {
@@ -83,6 +86,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
     showNotice,
   } = useApp();
 
+  const { t, language, setLanguage, availableLanguages } = useI18n();
+
   // Mode defaults to signup_company if team has no collaborators, otherwise login
   const [mode, setMode] = useState<AuthMode>(() => {
     return (state.collaborators || []).length > 0 ? 'login' : 'signup_company';
@@ -102,6 +107,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
 
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [resetSentForEmail, setResetSentForEmail] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const collaborators = state.collaborators || [];
@@ -282,20 +288,38 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
       {/* Top Navbar */}
       <header className="border-b border-[var(--line)] bg-[var(--paper)]/80 backdrop-blur-md sticky top-0 z-30 px-4 sm:px-8 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[var(--primary)] text-white flex items-center justify-center font-black shadow-xs">
-            <ShieldCheck className="w-5 h-5 text-white" />
-          </div>
+          <DimensioMonogram size="md" variant="auto" />
           <div>
-            <div className="text-base font-black tracking-tight leading-none text-[var(--ink)]">
-              Dimensio
+            <div className="text-base font-black tracking-tight leading-none text-[var(--ink)] flex items-center gap-1.5">
+              <span>Dimensio</span>
+              <span className="text-[10px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded-full bg-[var(--primary)]/10 text-[var(--primary)]">
+                PRO
+              </span>
             </div>
             <div className="text-[11px] text-[var(--muted)] font-medium mt-0.5">
-              Gestão Operacional, Escalas e Rádio PTT
+              {t('common.tagline')}
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Language Selector */}
+          <div className="relative flex items-center">
+            <Globe className="w-3.5 h-3.5 text-[var(--muted)] absolute left-2 pointer-events-none" />
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as any)}
+              className="pl-7 pr-2.5 py-1.5 rounded-lg border border-[var(--line)] bg-[var(--paper)] text-[11px] font-bold text-[var(--ink)] outline-none hover:border-[var(--primary)] transition-colors cursor-pointer appearance-none shadow-2xs"
+              aria-label="Selecionar Idioma / Select Language"
+            >
+              {availableLanguages.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.flag} {l.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {onConnectCloud && (
             <button
               type="button"
@@ -303,7 +327,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
               className="hidden sm:flex px-3 py-1.5 rounded-lg border border-[var(--line)] hover:bg-[var(--bg)] text-[11px] font-bold text-[var(--muted)] hover:text-[var(--ink)] items-center gap-1.5 transition-colors cursor-pointer"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Conectar Planilha</span>
+              <span>{t('common.connectSpreadsheet')}</span>
             </button>
           )}
 
@@ -312,7 +336,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
             onClick={handleGuestAccess}
             className="px-3 py-1.5 rounded-lg bg-[var(--bg)] hover:bg-[var(--line)]/50 text-[11px] font-bold text-[var(--ink)] transition-colors cursor-pointer"
           >
-            Explorar Demonstração
+            {t('common.exploreDemo')}
           </button>
         </div>
       </header>
@@ -376,7 +400,15 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
         </section>
 
         {/* Right Side: Interactive Auth & Company Registration Card */}
-        <section className="w-full max-w-md flex flex-col justify-center">
+        <section className="w-full max-w-md flex flex-col justify-center space-y-2.5">
+          <div className="flex items-center justify-between px-1">
+            <DimensioLogo size="md" variant="auto" showWordmark={true} />
+            <span className="text-[11px] font-bold text-[var(--muted)] flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              {t('featuresHighlight', {})}
+            </span>
+          </div>
+
           <div className="bg-[var(--paper)] border border-[var(--line)] rounded-2xl shadow-xl overflow-hidden">
             {/* Auth Mode Header Tabs */}
             <div className="flex border-b border-[var(--line)] bg-[var(--bg)]/50 p-1 text-xs font-bold">
@@ -394,7 +426,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                 }`}
               >
                 <Building2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                <span>Nova Empresa</span>
+                <span>{t('auth.companySignUp')}</span>
               </button>
 
               <button
@@ -411,7 +443,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                 }`}
               >
                 <Cloud className="w-3.5 h-3.5 text-indigo-500" />
-                <span>Entrar</span>
+                <span>{t('auth.login')}</span>
               </button>
 
               {hasTeamData && (
@@ -429,7 +461,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                   }`}
                 >
                   <User className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>Escala</span>
+                  <span>{t('auth.rosterLogin')}</span>
                 </button>
               )}
             </div>

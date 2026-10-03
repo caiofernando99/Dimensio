@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dimensio Dev Sandbox — Ambiente de Testes & Simulação de Sistemas</title>
+  <link rel="icon" href="/favicon.ico">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --primary: #4f46e5;
+      --bg: #0f172a;
+      --card: #1e293b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --border: #334155;
+    }
+    body { background-color: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, sans-serif; }
+    .code-box { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  </style>
+</head>
+<body class="min-h-screen p-4 sm:p-8">
+  <!-- Top Navigation & Header -->
+  <header class="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between pb-8 border-b border-slate-700 gap-4">
+    <div class="flex items-center gap-4">
+      <div class="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black text-2xl shadow-lg shadow-indigo-500/20">
+        D
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-2xl font-black tracking-tight text-white">Dimensio Dev Sandbox</h1>
+          <span class="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-black uppercase tracking-wider border border-amber-500/30">
+            Ambiente Isolado de Testes
+          </span>
+        </div>
+        <p class="text-xs text-slate-400 mt-0.5">
+          Simulador de sistemas externos corporativos, testes de extensão e console de APIs sem interferir na produção.
+        </p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <div id="extBadge" class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-400">
+        <span id="extDot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+        <span id="extText">Verificando Extensão...</span>
+      </div>
+      <a href="/" target="_blank" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black rounded-xl transition-all shadow-md flex items-center gap-1.5">
+        <span>Abrir App Dimensio</span>
+        <span>↗</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- Main Content Grid -->
+  <main class="max-w-7xl mx-auto py-8 space-y-10">
+
+    <!-- 1. Sistemas Corporativos Simulados (Para testar a extensão) -->
+    <section>
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="text-lg font-black text-white flex items-center gap-2">
+            <span>🏭</span>
+            <span>Sistemas Externos Simulados (Mock Systems)</span>
+          </h2>
+          <p class="text-xs text-slate-400">
+            Páginas com inputs, tabelas, crachás e métricas onde a Extensão Dimensio opera (destaque de nomes, preenchimento rápido e coleta de dados).
+          </p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <!-- Mock 1: WMS Simulator -->
+        <div class="bg-slate-800/90 border border-slate-700 hover:border-indigo-500/50 rounded-2xl p-5 transition-all shadow-md flex flex-col justify-between space-y-4">
+          <div class="space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-400 text-[10px] font-black border border-blue-500/20">
+                Logística & WMS
+              </span>
+              <span class="text-xs text-slate-400">v3.4.1</span>
+            </div>
+            <h3 class="text-base font-black text-white">Logix WMS Pro (Simulator)</h3>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              Simula um sistema de armazém com pedidos de separação (Picking), conferência em docas, leituras de código de barras e métricas em tempo real (ex: caixas/hora).
+            </p>
+            <div class="text-[11px] text-slate-300 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800 space-y-1">
+              <div>🎯 <strong>Cenário de Teste:</strong> Bipar REs, testar atalhos de preenchimento rápido e capturar contadores via seletor DOM.</div>
+            </div>
+          </div>
+          <a href="/test-sandbox/wms-simulator.html" target="_blank" class="w-full text-center py-2.5 bg-slate-700 hover:bg-indigo-600 text-white text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2">
+            <span>Abrir WMS Simulator</span>
+            <span>↗</span>
+          </a>
+        </div>
+
+        <!-- Mock 2: ERP Portal -->
+        <div class="bg-slate-800/90 border border-slate-700 hover:border-indigo-500/50 rounded-2xl p-5 transition-all shadow-md flex flex-col justify-between space-y-4">
+          <div class="space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 text-[10px] font-black border border-emerald-500/20">
+                RH & Gestão de Ponto
+              </span>
+              <span class="text-xs text-slate-400">v5.2.0</span>
+            </div>
+            <h3 class="text-base font-black text-white">CorpERP Ponto & Escalas</h3>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              Simula o ERP corporativo com lista de funcionários, turnos, espelho de ponto e integração via webhook para despacho em lote para a API de presença do Dimensio.
+            </p>
+            <div class="text-[11px] text-slate-300 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800 space-y-1">
+              <div>🎯 <strong>Cenário de Teste:</strong> Testar sincronização em lote e webhooks de ausência / atestados médicos.</div>
+            </div>
+          </div>
+          <a href="/test-sandbox/erp-portal.html" target="_blank" class="w-full text-center py-2.5 bg-slate-700 hover:bg-emerald-600 text-white text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2">
+            <span>Abrir ERP Simulator</span>
+            <span>↗</span>
+          </a>
+        </div>
+
+        <!-- Mock 3: Totem Terminal Kiosk -->
+        <div class="bg-slate-800/90 border border-slate-700 hover:border-indigo-500/50 rounded-2xl p-5 transition-all shadow-md flex flex-col justify-between space-y-4">
+          <div class="space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 text-[10px] font-black border border-amber-500/20">
+                Terminal Físico / Totem
+              </span>
+              <span class="text-xs text-slate-400">v1.8.0</span>
+            </div>
+            <h3 class="text-base font-black text-white">Totem Kiosk de Crachá</h3>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              Simula a tela cheia de um leitor físico de código de barras ou crachá RFID na entrada da fábrica/CD para validar check-in instantâneo de colaboradores.
+            </p>
+            <div class="text-[11px] text-slate-300 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800 space-y-1">
+              <div>🎯 <strong>Cenário de Teste:</strong> Validação de bipagem de matrícula com resposta sonora e visual em 100ms.</div>
+            </div>
+          </div>
+          <a href="/test-sandbox/kiosk-totem.html" target="_blank" class="w-full text-center py-2.5 bg-slate-700 hover:bg-amber-600 text-white text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2">
+            <span>Abrir Totem Kiosk</span>
+            <span>↗</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Contas de Empresas Simuladas (Mock Accounts) -->
+    <section class="bg-slate-800/60 border border-slate-700/80 rounded-2xl p-6 space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h2 class="text-base font-black text-white flex items-center gap-2">
+            <span>🏢</span>
+            <span>Contas de Empresas Simuladas (Mock Enterprise Workspaces)</span>
+          </h2>
+          <p class="text-xs text-slate-400">
+            Ambientes pré-configurados para validar regras de permissão, perfis de operadores e segregação de dados.
+          </p>
+        </div>
+        <button onclick="injectMockCompanyIntoLocal('logtech')" class="px-3 py-1.5 bg-slate-700 hover:bg-indigo-600 text-white text-xs font-bold rounded-xl transition-all">
+          Carregar Empresa A no App
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+        <!-- Empresa 1 -->
+        <div class="p-4 bg-slate-900/80 border border-slate-700/70 rounded-xl space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-black text-indigo-400">LogTech Express CD 01</span>
+            <span class="text-[10px] bg-slate-800 px-2 py-0.5 rounded text-slate-400 font-bold">Logística</span>
+          </div>
+          <p class="text-[11px] text-slate-400">120 operadores · 3 turnos (T1, T2, T3) · 8 postos de picking & docas</p>
+          <div class="text-[10px] text-slate-400 pt-1 border-t border-slate-800 flex justify-between">
+            <span>Gestor: <strong>carlos.log@empresa.com</strong></span>
+            <span class="text-emerald-400">Simulado</span>
+          </div>
+        </div>
+
+        <!-- Empresa 2 -->
+        <div class="p-4 bg-slate-900/80 border border-slate-700/70 rounded-xl space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-black text-emerald-400">Hospital & Saúde Vita</span>
+            <span class="text-[10px] bg-slate-800 px-2 py-0.5 rounded text-slate-400 font-bold">Saúde 12x36</span>
+          </div>
+          <p class="text-[11px] text-slate-400">45 enfermeiros e técnicos · Triagem, UTI, Farmácia e Recepção</p>
+          <div class="text-[10px] text-slate-400 pt-1 border-t border-slate-800 flex justify-between">
+            <span>Gestor: <strong>dra.fernanda@hospital.com</strong></span>
+            <span class="text-emerald-400">Simulado</span>
+          </div>
+        </div>
+
+        <!-- Empresa 3 -->
+        <div class="p-4 bg-slate-900/80 border border-slate-700/70 rounded-xl space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-black text-amber-400">Manufatura Stark S/A</span>
+            <span class="text-[10px] bg-slate-800 px-2 py-0.5 rounded text-slate-400 font-bold">Indústria 6x2</span>
+          </div>
+          <p class="text-[11px] text-slate-400">80 operadores industriais · Linhas CNC, Solda e Controle de Qualidade</p>
+          <div class="text-[10px] text-slate-400 pt-1 border-t border-slate-800 flex justify-between">
+            <span>Gestor: <strong>eng.roberto@industria.com</strong></span>
+            <span class="text-emerald-400">Simulado</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Console Interativo de Teste de APIs (REST + WebRTC + Auth Triggers) -->
+    <section class="bg-slate-800/80 border border-slate-700 rounded-2xl p-6 space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h2 class="text-base font-black text-white flex items-center gap-2">
+            <span>⚡</span>
+            <span>Console de Teste de APIs Dimensio (Live Test Bench)</span>
+          </h2>
+          <p class="text-xs text-slate-400">
+            Execute requisições reais contra o backend local sem afetar dados de produção.
+          </p>
+        </div>
+        <button onclick="runAllHealthChecks()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all">
+          Executar Diagnóstico Completo
+        </button>
+      </div>
+
+      <!-- Action Buttons Grid -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <button onclick="testApiHealth()" class="p-3 bg-slate-900 border border-slate-700 hover:border-indigo-500 rounded-xl text-left transition-all">
+          <div class="text-xs font-bold text-white">GET /api/health</div>
+          <div class="text-[10px] text-slate-400 mt-1">Status do servidor Node</div>
+        </button>
+        <button onclick="testCloudSqlStatus()" class="p-3 bg-slate-900 border border-slate-700 hover:border-indigo-500 rounded-xl text-left transition-all">
+          <div class="text-xs font-bold text-white">GET /api/cloudsql/status</div>
+          <div class="text-[10px] text-slate-400 mt-1">Banco de dados Cloud SQL</div>
+        </button>
+        <button onclick="testPresenceWebhook()" class="p-3 bg-slate-900 border border-slate-700 hover:border-emerald-500 rounded-xl text-left transition-all">
+          <div class="text-xs font-bold text-white">POST /api/presence/webhook</div>
+          <div class="text-[10px] text-slate-400 mt-1">Bipar presença simulada</div>
+        </button>
+        <button onclick="testWelcomeEmailTrigger()" class="p-3 bg-slate-900 border border-slate-700 hover:border-amber-500 rounded-xl text-left transition-all">
+          <div class="text-xs font-bold text-white">POST /api/auth/send-welcome-email</div>
+          <div class="text-[10px] text-slate-400 mt-1">Disparar e-mail de onboarding</div>
+        </button>
+      </div>
+
+      <!-- Live API Response Output -->
+      <div class="space-y-2">
+        <div class="flex items-center justify-between text-xs font-bold text-slate-400">
+          <span>Resposta do Endpoint:</span>
+          <button onclick="clearConsole()" class="text-slate-500 hover:text-white text-[11px]">Limpar</button>
+        </div>
+        <pre id="apiOutput" class="code-box bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs text-emerald-400 overflow-x-auto min-h-[140px] max-h-[300px]">Clique em um dos botões acima para executar um teste de API...</pre>
+      </div>
+    </section>
+
+    <!-- 4. Guia & Alternativas para Instalação em Empresas Gerenciadas -->
+    <section class="bg-indigo-950/40 border border-indigo-800/60 rounded-2xl p-6 space-y-4">
+      <div class="flex items-center gap-3">
+        <span class="text-2xl">🛡️</span>
+        <div>
+          <h2 class="text-base font-black text-white">Soluções para Ambientes Corporativos Gerenciados (Políticas de TI)</h2>
+          <p class="text-xs text-indigo-300">
+            Como contornar o bloqueio do Modo de Desenvolvedor em navegadores controlados pela TI corporativa.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 text-xs">
+        <div class="bg-slate-900/80 p-4 rounded-xl border border-indigo-900/60 space-y-2">
+          <div class="font-black text-indigo-300">1. Política GPO / Force-Install</div>
+          <p class="text-slate-400 text-[11px] leading-relaxed">
+            A TI corporativa pode instalar a extensão silenciosamente via GPO do Windows, Microsoft Intune ou Google Workspace Admin console usando <code class="text-indigo-300">ExtensionInstallForcelist</code> sem precisar de aprovação do usuário.
+          </p>
+        </div>
+        <div class="bg-slate-900/80 p-4 rounded-xl border border-indigo-900/60 space-y-2">
+          <div class="font-black text-emerald-300">2. Chrome Web Store Privada</div>
+          <p class="text-slate-400 text-[11px] leading-relaxed">
+            Publicação como extensão privada vinculada ao domínio Google Workspace da empresa. Os usuários instalam com 1 clique diretamente da Chrome Web Store oficial com certificação do Google.
+          </p>
+        </div>
+        <div class="bg-slate-900/80 p-4 rounded-xl border border-indigo-900/60 space-y-2">
+          <div class="font-black text-amber-300">3. Solução Zero-Install (Bookmarklet)</div>
+          <p class="text-slate-400 text-[11px] leading-relaxed">
+            Para empresas com restrição máxima, disponibilizamos um Bookmarklet / script corporativo que injeta os mesmos botões de preenchimento e atalhos PTT sem precisar instalar extensão de navegador.
+          </p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="max-w-7xl mx-auto pt-8 border-t border-slate-800 text-center text-xs text-slate-500">
+    Dimensio Test Sandbox · Ferramenta de desenvolvimento para simulações e integração de extensão.
+  </footer>
+
+  <script>
+    // Detecta presença da Extensão Dimensio
+    function checkExtension() {
+      const isInstalled = document.documentElement.hasAttribute('data-dimensio-ext') || 
+                          (window.__DIMENSIO_BRIDGE__ && window.__DIMENSIO_BRIDGE__.installed);
+      const dot = document.getElementById('extDot');
+      const text = document.getElementById('extText');
+      if (isInstalled) {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50';
+        text.className = 'text-emerald-400 font-bold';
+        text.innerText = 'Extensão Dimensio Ativa ✓';
+      } else {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
+        text.className = 'text-slate-400 font-medium';
+        text.innerText = 'Extensão não detectada (Modo Sandbox)';
+      }
+    }
+    setTimeout(checkExtension, 600);
+
+    function logOutput(data) {
+      const out = document.getElementById('apiOutput');
+      out.innerText = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+    }
+
+    function clearConsole() {
+      document.getElementById('apiOutput').innerText = 'Console limpo. Execute um teste...';
+    }
+
+    async function testApiHealth() {
+      logOutput('Executando GET /api/health...');
+      try {
+        const res = await fetch('/api/health');
+        const json = await res.json();
+        logOutput(json);
+      } catch (err) {
+        logOutput('Erro na requisição: ' + err.message);
+      }
+    }
+
+    async function testCloudSqlStatus() {
+      logOutput('Executando GET /api/cloudsql/status...');
+      try {
+        const res = await fetch('/api/cloudsql/status');
+        const json = await res.json();
+        logOutput(json);
+      } catch (err) {
+        logOutput('Erro na requisição: ' + err.message);
+      }
+    }
+
+    async function testPresenceWebhook() {
+      logOutput('Enviando bip de presença simulada para POST /api/presence/webhook...');
+      try {
+        const payload = {
+          name: 'Operador Teste Sandbox',
+          login: 'op.teste',
+          registration: 'RE-9999',
+          shift: 'T1',
+          status: 'presente',
+          source: 'WMS-Simulator',
+          timestamp: Date.now()
+        };
+        const res = await fetch('/api/presence/webhook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        logOutput({ message: 'Webhook recebido com sucesso!', serverResponse: json, sentPayload: payload });
+      } catch (err) {
+        logOutput('Erro no webhook: ' + err.message);
+      }
+    }
+
+    async function testWelcomeEmailTrigger() {
+      logOutput('Disparando trigger de e-mail POST /api/auth/send-welcome-email...');
+      try {
+        const payload = {
+          email: 'novo.gestor@empresa-teste.com',
+          displayName: 'Carlos Eduardo Gestor',
+          companyName: 'LogTech Express Sandbox',
+          userId: 'test_user_' + Date.now()
+        };
+        const res = await fetch('/api/auth/send-welcome-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        logOutput(json);
+      } catch (err) {
+        logOutput('Erro no trigger de e-mail: ' + err.message);
+      }
+    }
+
+    async function runAllHealthChecks() {
+      logOutput('Executando diagnóstico completo de APIs...');
+      const results = {};
+      try {
+        const h = await fetch('/api/health').then(r => r.json());
+        results.health = h;
+      } catch(e) { results.health = e.message; }
+
+      try {
+        const v = await fetch('/api/version').then(r => r.json());
+        results.version = v;
+      } catch(e) { results.version = e.message; }
+
+      try {
+        const c = await fetch('/api/cloudsql/status').then(r => r.json());
+        results.cloudsql = c;
+      } catch(e) { results.cloudsql = e.message; }
+
+      logOutput(results);
+    }
+  </script>
+</body>
+</html>

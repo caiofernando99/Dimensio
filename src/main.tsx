@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { registerSW } from './registerSW.ts';
+import { I18nProvider } from './i18n';
 
 // Registra o Service Worker para suporte a PWA e Background Sync
 registerSW();
@@ -28,6 +29,8 @@ window.addEventListener('unhandledrejection', (e) => {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <I18nProvider>
+      <App />
+    </I18nProvider>
   </StrictMode>,
 );

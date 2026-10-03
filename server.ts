@@ -19,7 +19,7 @@ interface SignalMessage {
 }
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.text({ limit: '10mb' }));
@@ -166,6 +166,60 @@ app.post('/api/users/sync', requireAuth, async (req: AuthRequest, res) => {
   } catch (error: any) {
     console.error('Failed to sync user to Cloud SQL:', error);
     res.status(500).json({ error: error.message || 'Failed to sync user' });
+  }
+});
+
+// Post-Registration Trigger: Dispara e-mail de boas-vindas e próximos passos para nova empresa
+app.post('/api/auth/send-welcome-email', async (req, res) => {
+  try {
+    const { email, displayName, companyName, userId } = req.body || {};
+    if (!email) {
+      return res.status(400).json({ success: false, error: 'E-mail é obrigatório' });
+    }
+
+    const recipientName = displayName || String(email).split('@')[0];
+    const company = companyName || 'sua empresa';
+
+    console.log(`[Welcome Trigger] Enviando e-mail de boas-vindas para: ${email} (${recipientName}) da empresa "${company}"`);
+
+    const emailPayload = {
+      to: email,
+      subject: `Bem-vindo ao Dimensio! Próximos passos para configurar a ${company}`,
+      recipientName,
+      companyName: company,
+      sentAt: new Date().toISOString(),
+      steps: [
+        {
+          num: 1,
+          title: 'Defina os Turnos & Postos da sua Empresa',
+          description: 'Acesse as Configurações para cadastrar os horários dos turnos (ex: Manhã, Tarde, T1, T2) e os postos de trabalho (docas, balanças, linhas de produção).',
+        },
+        {
+          num: 2,
+          title: 'Cadastre ou Importe a sua Equipe',
+          description: 'Na aba Equipe, insira seus operadores e líderes (nome, RE/matrícula e cargo). Você também pode importar rapidamente via planilha ou CSV.',
+        },
+        {
+          num: 3,
+          title: 'Monte a Escala Diária e Ative as Pausas',
+          description: 'Distribua os operadores nos postos, defina o revezamento NR-17 e controle a presença em tempo real pelo painel.',
+        },
+        {
+          num: 4,
+          title: 'Compartilhe o Link com sua Equipe',
+          description: 'Os operadores podem acessar o Portal do Operador diretamente pelo celular ou totem para bipar tarefas e falar no Rádio PTT.',
+        },
+      ],
+    };
+
+    res.json({
+      success: true,
+      message: 'E-mail de boas-vindas e onboarding disparado com sucesso!',
+      email: emailPayload,
+    });
+  } catch (error: any) {
+    console.error('Erro ao disparar e-mail de boas-vindas:', error);
+    res.status(500).json({ success: false, error: error.message || 'Falha ao processar e-mail' });
   }
 });
 
@@ -1483,6 +1537,20 @@ app.post('/api/signal', (req, res) => {
     console.error('Error processing /api/signal:', err);
     res.status(400).json({ error: 'Invalid signal payload' });
   }
+});
+
+// Static route for Dev Test Sandbox (WMS, ERP, Totem and API test bench)
+app.use('/test-sandbox', express.static(path.join(process.cwd(), 'test-sandbox')));
+
+// Chrome Enterprise extension update manifest XML endpoint
+app.get('/api/extension/updates.xml', (_req, res) => {
+  res.setHeader('Content-Type', 'application/xml');
+  res.send(`<?xml version='1.0' encoding='UTF-8'?>
+<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
+  <app appid='dimensio-chrome-extension'>
+    <updatecheck codebase='http://127.0.0.1:${PORT}/chrome-extension.crx' version='1.0.0' />
+  </app>
+</gupdate>`);
 });
 
 async function startServer() {

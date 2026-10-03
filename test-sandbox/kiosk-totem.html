@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Totem Kiosk Operacional — Terminal Físico de Crachá</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #0b1120; color: #f8fafc; font-family: ui-sans-serif, system-ui, sans-serif; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between p-6 sm:p-12">
+  <!-- Kiosk Header -->
+  <div class="flex items-center justify-between border-b border-slate-800 pb-6">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 font-black flex items-center justify-center text-lg">
+        T
+      </div>
+      <div>
+        <h1 class="text-xl font-black text-white">TERMINAL KIOSK · ENTRADA PRINCIPAL</h1>
+        <p class="text-xs text-slate-400">Leitor Óptico de Crachá & Biometria Digital</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-4">
+      <div class="text-right">
+        <div id="kioskClock" class="text-2xl font-mono font-bold text-amber-400">14:00:00</div>
+        <div class="text-[10px] text-slate-500 uppercase tracking-widest">Sincronizado com Dimensio API</div>
+      </div>
+      <a href="/test-sandbox/index.html" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg">
+        ← Voltar
+      </a>
+    </div>
+  </div>
+
+  <!-- Center: Barcode / RFID Scanning Area -->
+  <main class="max-w-xl mx-auto w-full text-center space-y-6 my-auto">
+    <div class="w-24 h-24 mx-auto rounded-3xl bg-slate-800/80 border-2 border-dashed border-amber-500/40 flex items-center justify-center text-4xl shadow-xl shadow-amber-500/10 animate-pulse">
+      📇
+    </div>
+
+    <div class="space-y-2">
+      <h2 class="text-2xl sm:text-3xl font-black text-white">Aproxime seu Crachá ou Digite seu RE</h2>
+      <p class="text-sm text-slate-400">O sistema registrará seu posto e confirmará sua presença automaticamente.</p>
+    </div>
+
+    <form onsubmit="handleScan(event)" class="space-y-4">
+      <input 
+        id="badgeInput" 
+        type="text" 
+        placeholder="Ex: RE-1001" 
+        class="w-full text-center py-4 bg-slate-900 border-2 border-slate-700 focus:border-amber-400 text-xl font-mono text-white rounded-2xl outline-none tracking-widest placeholder:text-slate-600 shadow-inner"
+        autofocus
+      />
+
+      <div class="flex gap-2 justify-center">
+        <button type="submit" class="px-8 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm rounded-xl transition-all shadow-lg shadow-amber-500/20">
+          Confirmar Ponto / Posto
+        </button>
+      </div>
+    </form>
+
+    <!-- Pre-set Test Badges -->
+    <div class="pt-4 border-t border-slate-800/80">
+      <span class="text-xs text-slate-500 uppercase font-bold tracking-wider">Crachás de Teste Rápido:</span>
+      <div class="flex flex-wrap gap-2 justify-center mt-2 text-xs font-mono">
+        <button onclick="fillAndScan('RE-1001', 'Carlos Silva')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300">
+          RE-1001 (Carlos)
+        </button>
+        <button onclick="fillAndScan('RE-1002', 'Mariana Costa')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300">
+          RE-1002 (Mariana)
+        </button>
+        <button onclick="fillAndScan('RE-1003', 'Bruno Henrique')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300">
+          RE-1003 (Bruno)
+        </button>
+      </div>
+    </div>
+
+    <!-- Scan Confirmation Banner -->
+    <div id="scanResult" class="hidden p-5 rounded-2xl text-left border"></div>
+  </main>
+
+  <footer class="text-center text-xs text-slate-600 border-t border-slate-900 pt-4">
+    Terminal Kiosk Simulado para validação de leitores físicos e APIs de presença do Dimensio.
+  </footer>
+
+  <script>
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('kioskClock').innerText = now.toLocaleTimeString('pt-BR');
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    function fillAndScan(re, name) {
+      document.getElementById('badgeInput').value = re;
+      dispatchPresence(re, name);
+    }
+
+    function handleScan(e) {
+      e.preventDefault();
+      const val = document.getElementById('badgeInput').value.trim();
+      if (!val) return;
+      dispatchPresence(val, 'Colaborador ' + val);
+    }
+
+    async function dispatchPresence(re, name) {
+      const banner = document.getElementById('scanResult');
+      banner.className = 'p-4 rounded-xl text-center bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold';
+      banner.innerText = 'Processando leitura de crachá...';
+      banner.classList.remove('hidden');
+
+      try {
+        const res = await fetch('/api/presence/webhook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: name,
+            registration: re,
+            shift: 'T1',
+            status: 'presente',
+            source: 'Totem-Kiosk-Entrada',
+            timestamp: Date.now()
+          })
+        });
+        const json = await res.json();
+        banner.className = 'p-5 rounded-2xl bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-sm space-y-1';
+        banner.innerHTML = `
+          <div class="font-black text-base text-emerald-400">✓ Presença Confirmada no Dimensio!</div>
+          <div>Colaborador: <strong>${name}</strong> (${re})</div>
+          <div class="text-xs text-slate-400 font-mono">Status enviado: PRESENTE · Servidor: OK</div>
+        `;
+        document.getElementById('badgeInput').value = '';
+        setTimeout(() => banner.classList.add('hidden'), 5000);
+      } catch (err) {
+        banner.className = 'p-4 rounded-xl bg-rose-950/80 border border-rose-500/40 text-rose-300 text-xs font-bold';
+        banner.innerText = 'Erro ao registrar: ' + err.message;
+      }
+    }
+  </script>
+</body>
+</html>

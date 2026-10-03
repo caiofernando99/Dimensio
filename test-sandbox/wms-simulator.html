@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Logix WMS Pro — Simulador de Armazém & Separação</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f1f5f9; color: #1e293b; }
+    .highlighted-by-ext { background-color: #fef08a !important; color: #854d0e !important; font-weight: bold; border-radius: 4px; padding: 2px 4px; }
+  </style>
+</head>
+<body class="p-4 sm:p-6">
+  <!-- WMS Top Navbar -->
+  <div class="max-w-6xl mx-auto bg-slate-900 text-white p-4 rounded-xl flex items-center justify-between shadow-md mb-6">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-sm">WMS</div>
+      <div>
+        <div class="text-sm font-black tracking-wide">LOGIX WMS ENTERPRISE · MODULO SEPARAÇÃO</div>
+        <div class="text-[11px] text-slate-400">CD Cajamar — Setor Recebimento & Picking</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-3 text-xs">
+      <span class="px-2.5 py-1 rounded bg-slate-800 text-slate-300 font-mono">Doca: DC-04</span>
+      <span class="px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">ONLINE</span>
+      <a href="/test-sandbox/index.html" class="text-slate-400 hover:text-white ml-2 text-xs">← Voltar ao Sandbox</a>
+    </div>
+  </div>
+
+  <main class="max-w-6xl mx-auto space-y-6">
+    <!-- Extension Diagnostic Bar -->
+    <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+      <div class="flex items-center gap-2">
+        <span class="text-lg">🔌</span>
+        <div>
+          <span class="font-black text-indigo-900">Extensão Dimensio no WMS:</span>
+          <span id="extStatusText" class="text-indigo-700 ml-1">Testando injeção do content script...</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="triggerHighlightTest()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-colors">
+          Destacar Equipe na Tela
+        </button>
+        <button onclick="triggerQuickFillTest()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-lg transition-colors">
+          Injetar Código Rápido
+        </button>
+      </div>
+    </div>
+
+    <!-- Real-Time Metrics Counters (To test Dimensio Metric Picker Selector) -->
+    <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider">Métrica 1 (Caixas/Hora)</div>
+        <div id="metric-caixas-hora" class="text-2xl font-black text-slate-800 mt-1">482 cx/h</div>
+        <div class="text-[10px] text-slate-400 font-mono mt-0.5">ID: #metric-caixas-hora</div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider">Métrica 2 (Acuracidade)</div>
+        <div id="metric-acuracidade" class="text-2xl font-black text-emerald-600 mt-1">99.4%</div>
+        <div class="text-[10px] text-slate-400 font-mono mt-0.5">ID: #metric-acuracidade</div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider">Métrica 3 (Fila Pendente)</div>
+        <div id="metric-fila-pendente" class="text-2xl font-black text-amber-600 mt-1">14 pedidos</div>
+        <div class="text-[10px] text-slate-400 font-mono mt-0.5">ID: #metric-fila-pendente</div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider">Métrica 4 (Operadores Ativos)</div>
+        <div id="metric-operadores-ativos" class="text-2xl font-black text-blue-600 mt-1">18 ops</div>
+        <div class="text-[10px] text-slate-400 font-mono mt-0.5">ID: #metric-operadores-ativos</div>
+      </div>
+    </div>
+
+    <!-- Barcode Scanner Input (Test Quick-Fills) -->
+    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-3">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
+          <span>📦</span>
+          <span>Leitura de Código de Barras / SKU / Ordem de Serviço</span>
+        </h3>
+        <span class="text-xs text-slate-400">Campo monitorado para preenchimento rápido</span>
+      </div>
+
+      <div class="flex gap-2">
+        <input 
+          id="barcode-input"
+          type="text" 
+          placeholder="Biper código de barras, SKU ou matrícula..." 
+          class="flex-1 px-4 py-2.5 border-2 border-slate-300 rounded-lg text-sm font-mono outline-none focus:border-blue-600 bg-slate-50"
+        />
+        <button onclick="simulateScan()" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg transition-colors">
+          Simular Leitura
+        </button>
+      </div>
+    </div>
+
+    <!-- Orders & Operator Assignment Table (Test Highlight & Name Matching) -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+      <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+        <h3 class="text-xs font-black uppercase tracking-wider text-slate-700">
+          Ordens de Separação em Andamento (Postos & Operadores)
+        </h3>
+        <span class="text-[11px] text-slate-500">Nomes nesta tabela podem ser destacados pela Extensão Dimensio</span>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-100 text-slate-600 border-b border-slate-200">
+            <tr>
+              <th class="p-3 font-bold">O.S. / Pedido</th>
+              <th class="p-3 font-bold">Posto / Doca</th>
+              <th class="p-3 font-bold">Operador Responsável</th>
+              <th class="p-3 font-bold">Matrícula (RE)</th>
+              <th class="p-3 font-bold">Turno</th>
+              <th class="p-3 font-bold">Status</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 text-slate-700">
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold text-blue-600">#OS-88210</td>
+              <td class="p-3">Doca 01 (Descarregamento)</td>
+              <td class="p-3 font-bold name-cell">Carlos Silva Santos</td>
+              <td class="p-3 font-mono">RE-1044</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-bold">T1</span></td>
+              <td class="p-3 text-emerald-600 font-bold">Em Separação</td>
+            </tr>
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold text-blue-600">#OS-88211</td>
+              <td class="p-3">Bancada 03 (Packing)</td>
+              <td class="p-3 font-bold name-cell">Mariana Costa Pereira</td>
+              <td class="p-3 font-mono">RE-1092</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[10px] font-bold">T2</span></td>
+              <td class="p-3 text-emerald-600 font-bold">Conferindo</td>
+            </tr>
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold text-blue-600">#OS-88212</td>
+              <td class="p-3">Empilhadeira 02 (Pulmão)</td>
+              <td class="p-3 font-bold name-cell">Bruno Henrique Ramos</td>
+              <td class="p-3 font-mono">RE-2015</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-bold">T1</span></td>
+              <td class="p-3 text-amber-600 font-bold">Pausa NR-17</td>
+            </tr>
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold text-blue-600">#OS-88213</td>
+              <td class="p-3">Auditoria ICQA (Contagem)</td>
+              <td class="p-3 font-bold name-cell">Fernanda Lima Ribeiro</td>
+              <td class="p-3 font-mono">RE-3048</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-purple-100 text-purple-800 text-[10px] font-bold">T3</span></td>
+              <td class="p-3 text-emerald-600 font-bold">Ativo</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // Verifica bridge da extensão
+    function checkBridge() {
+      const isExt = document.documentElement.hasAttribute('data-dimensio-ext') || 
+                    (window.__DIMENSIO_BRIDGE__ && window.__DIMENSIO_BRIDGE__.installed);
+      const text = document.getElementById('extStatusText');
+      if (isExt) {
+        text.innerText = 'Extensão Dimensio Conectada com Sucesso ✓';
+        text.className = 'text-emerald-700 font-bold';
+      } else {
+        text.innerText = 'Extensão não detectada nesta página. Para testar o destaque e preenchimento rápido, instale a extensão do Dimensio no Chrome.';
+      }
+    }
+    setTimeout(checkBridge, 700);
+
+    // Dispara teste de destaque de nomes
+    function triggerHighlightTest() {
+      const names = ['Carlos Silva Santos', 'Mariana Costa Pereira'];
+      // Envia postMessage capturado pelo content.js
+      window.postMessage({
+        source: 'DIMENSIO_APP',
+        type: 'DIMENSIO_HIGHLIGHT',
+        names: names,
+        title: 'Escala Dimensio T1/T2'
+      }, '*');
+
+      // Feedback visual direto caso a extensão não esteja ativa
+      document.querySelectorAll('.name-cell').forEach(td => {
+        if (names.some(n => td.innerText.includes(n))) {
+          td.classList.toggle('highlighted-by-ext');
+        }
+      });
+    }
+
+    // Injeta código de teste no input
+    function triggerQuickFillTest() {
+      const input = document.getElementById('barcode-input');
+      input.value = 'SKU-LOGIX-7739-BR';
+      input.focus();
+    }
+
+    function simulateScan() {
+      const input = document.getElementById('barcode-input');
+      const val = input.value || 'LOTE-8829-DOCA04';
+      input.value = val;
+      alert('Leitura confirmada para: ' + val);
+    }
+  </script>
+</body>
+</html>

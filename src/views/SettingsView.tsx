@@ -559,7 +559,13 @@ export const SettingsView: React.FC = () => {
   const [auditActionFilter, setAuditActionFilter] = useState<string>('todos');
 
   // Hidden developer mode (unlock by tapping the version chip 5 times)
-  const [devMode, setDevMode] = useState(() => localStorage.getItem('escalapro_dev_mode') === '1');
+  const [devMode, setDevMode] = useState(() => {
+    try {
+      return typeof window !== 'undefined' && localStorage.getItem('escalapro_dev_mode') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [devClicks, setDevClicks] = useState(0);
 
   const [resetModalOpen, setResetModalOpen] = useState(false);
@@ -1048,16 +1054,19 @@ export const SettingsView: React.FC = () => {
             <div className="hidden lg:flex flex-col gap-1.5 border-t border-[var(--line)] mt-2 pt-2 px-1">
               <button
                 onClick={() => {
-                  setDevClicks((c) => {
-                    const n = c + 1;
-                    if (n >= 5) {
-                      setDevMode(true);
+                  const nextClicks = devClicks + 1;
+                  if (nextClicks >= 5) {
+                    setDevClicks(0);
+                    setDevMode(true);
+                    try {
                       localStorage.setItem('escalapro_dev_mode', '1');
-                      showNotice('Opções de Desenvolvedor desbloqueadas!');
-                      return 0;
+                    } catch {
+                      // ignore
                     }
-                    return n;
-                  });
+                    showNotice('Opções de Desenvolvedor desbloqueadas!');
+                  } else {
+                    setDevClicks(nextClicks);
+                  }
                 }}
                 title={devMode ? 'Menu do desenvolvedor ativo' : 'Toque 5 vezes para acessar o menu do desenvolvedor'}
                 className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black border transition-colors cursor-pointer select-none ${
@@ -1073,7 +1082,11 @@ export const SettingsView: React.FC = () => {
                 <button
                   onClick={() => {
                     setDevMode(false);
-                    localStorage.removeItem('escalapro_dev_mode');
+                    try {
+                      localStorage.removeItem('escalapro_dev_mode');
+                    } catch {
+                      // ignore
+                    }
                     if (activeTab === 'developer') setActiveTab('general');
                     showNotice('Opções de Desenvolvedor desativadas e ocultadas.');
                   }}

@@ -502,6 +502,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const saved = getAppStorage().getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
+        if (
+          parsed.isSampleData ||
+          parsed.teamName === 'Centro de Distribuição Cajamar' ||
+          parsed.teamName === 'Operação Logística Multissetorial'
+        ) {
+          getAppStorage().removeItem(STORAGE_KEY);
+          return {
+            ...initialAppState,
+            updatedAtMs: Date.now(),
+            isSampleData: false,
+          };
+        }
         const normalized = normalizeAppState(parsed, initialAppState);
         return {
           ...normalized,
@@ -3981,7 +3993,21 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     try {
       setIsAuthLoading(true);
       const user = await emailSignUp(email, pass, displayName);
-      return await syncUserSessionFromFirebaseAuth(user, companyName);
+      const syncResult = await syncUserSessionFromFirebaseAuth(user, companyName);
+      if (syncResult.success) {
+        // Trigger welcome onboarding email with company next steps
+        fetch('/api/auth/send-welcome-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: email.trim(),
+            displayName: displayName || user.displayName || email.split('@')[0],
+            companyName: companyName || 'sua empresa',
+            userId: user.uid,
+          }),
+        }).catch((err) => console.warn('Welcome email trigger non-blocking error:', err));
+      }
+      return syncResult;
     } catch (err: any) {
       console.error('Email sign up error:', err);
       let msg = err?.message || 'Falha ao cadastrar usuário.';

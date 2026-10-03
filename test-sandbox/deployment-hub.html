@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dimensio — Guia de Distribuição Empresarial & Políticas de TI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #0f172a; color: #f8fafc; font-family: ui-sans-serif, system-ui, sans-serif; }
+    .code-box { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  </style>
+</head>
+<body class="p-6 sm:p-10 max-w-5xl mx-auto space-y-8">
+  <!-- Header -->
+  <header class="border-b border-slate-800 pb-6 flex items-center justify-between">
+    <div>
+      <div class="flex items-center gap-2">
+        <span class="text-2xl">🛡️</span>
+        <h1 class="text-2xl font-black text-white">Guia de Distribuição em Redes Gerenciadas (TI Corporativa)</h1>
+      </div>
+      <p class="text-xs text-slate-400 mt-1">
+        Soluções para contornar o bloqueio do Modo de Desenvolvedor e viabilizar a Extensão Dimensio em conformidade com a segurança da empresa.
+      </p>
+    </div>
+    <a href="/test-sandbox/index.html" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-xl transition-all">
+      ← Sandbox
+    </a>
+  </header>
+
+  <main class="space-y-8 text-xs text-slate-300">
+    <!-- Solução 1: Zero-Install Bookmarklet -->
+    <section class="bg-indigo-950/40 border border-indigo-800/80 rounded-2xl p-6 space-y-4">
+      <div class="flex items-center gap-3">
+        <span class="p-2 rounded-xl bg-indigo-600 text-white font-bold">SOLUÇÃO 1</span>
+        <div>
+          <h2 class="text-base font-black text-white">Dimensio Bookmarklet Corporativo (Zero-Install)</h2>
+          <p class="text-slate-400">Funciona instantaneamente em qualquer navegador gerenciado, sem necessitar de permissões de extensão nem do Modo de Desenvolvedor.</p>
+        </div>
+      </div>
+
+      <div class="bg-slate-900/90 p-4 rounded-xl border border-slate-800 space-y-3">
+        <p class="text-slate-300 leading-relaxed">
+          Arraste o botão abaixo para a sua barra de favoritos. Ao clicar nele em qualquer página de WMS ou ERP, a barra de preenchimento rápido e atalhos operacionais do Dimensio surgirá automaticamente no canto da tela:
+        </p>
+        <div class="p-4 bg-slate-950 rounded-xl border border-slate-800 text-center">
+          <a 
+            href="javascript:(function(){const s=document.createElement('script');s.src='http://127.0.0.1:3000/test-sandbox/corporate-script.js?t='+Date.now();document.head.appendChild(s);})();" 
+            class="inline-block px-5 py-2.5 bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white font-black rounded-xl shadow-lg cursor-grab select-none"
+            title="Arraste este botão para sua barra de favoritos do navegador"
+          >
+            ⚡ Dimensio QuickTools (Arraste para Favoritos)
+          </a>
+          <p class="text-[10px] text-slate-500 mt-2">Dica: Se a barra de favoritos estiver oculta, pressione <kbd class="bg-slate-800 px-1 py-0.5 rounded">Ctrl + Shift + B</kbd></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Solução 2: Chrome Enterprise Policy (GPO / Intune / Google Workspace) -->
+    <section class="bg-slate-800/60 border border-slate-700 rounded-2xl p-6 space-y-4">
+      <div class="flex items-center gap-3">
+        <span class="p-2 rounded-xl bg-emerald-600 text-white font-bold">SOLUÇÃO 2</span>
+        <div>
+          <h2 class="text-base font-black text-white">Instalação Forçada pela TI (GPO / ExtensionInstallForcelist)</h2>
+          <p class="text-slate-400">Padrão da indústria para empresas com Microsoft Active Directory, Intune ou Google Workspace.</p>
+        </div>
+      </div>
+
+      <div class="space-y-3 text-slate-300">
+        <p>
+          Em computadores corporativos gerenciados, o departamento de TI pode instalar a extensão silenciosamente em todos os terminais sem exigir modo de desenvolvedor:
+        </p>
+
+        <div class="space-y-2">
+          <div class="font-bold text-white">Chave de Registro Windows (.reg):</div>
+          <pre class="code-box bg-slate-950 p-4 rounded-xl text-emerald-400 text-[11px] overflow-x-auto border border-slate-800">Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist]
+"1"="[EXTENSION_ID];https://ais-pre-m46gb5dmwo4z3ulnbl5zpy-412144027959.us-east1.run.app/api/extension/updates.xml"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\ExtensionInstallSources]
+"1"="https://ais-pre-m46gb5dmwo4z3ulnbl5zpy-412144027959.us-east1.run.app/*"</pre>
+        </div>
+
+        <div class="space-y-2">
+          <div class="font-bold text-white">Política para Google Workspace Admin Console:</div>
+          <pre class="code-box bg-slate-950 p-4 rounded-xl text-indigo-400 text-[11px] overflow-x-auto border border-slate-800">Acesse: Dispositivos > Chrome > Aplicativos e extensões > Usuários e navegadores
+1. Clique em Adicionar > Adicionar extensão do Chrome por ID
+2. Cole o ID da extensão Dimensio
+3. Defina a Política de Instalação como: "Forçar instalação"</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Solução 3: Chrome Web Store Privada -->
+    <section class="bg-slate-800/60 border border-slate-700 rounded-2xl p-6 space-y-4">
+      <div class="flex items-center gap-3">
+        <span class="p-2 rounded-xl bg-amber-600 text-white font-bold">SOLUÇÃO 3</span>
+        <div>
+          <h2 class="text-base font-black text-white">Publicação Privada na Chrome Web Store</h2>
+          <p class="text-slate-400">Distribuição com assinatura digital do Google restrita aos colaboradores da sua empresa.</p>
+        </div>
+      </div>
+
+      <div class="text-slate-300 space-y-2">
+        <p>
+          Ao enviar a extensão para o painel de desenvolvedores da Chrome Web Store, selecione a visibilidade:
+        </p>
+        <ul class="list-disc list-inside space-y-1 text-slate-400 pl-2">
+          <li><strong>Privada (Restrita ao Domínio):</strong> Apenas contas logadas com o e-mail Google Workspace da organização (ex: <code class="text-amber-300">@suaempresa.com</code>) podem ver e instalar.</li>
+          <li><strong>Não Listada (Unlisted):</strong> Apenas quem possui o link direto pode instalar, não aparecendo em buscas públicas.</li>
+        </ul>
+        <p class="pt-2 text-slate-400">
+          Dessa forma, as políticas corporativas que bloqueiam o modo de desenvolvedor não afetam a extensão, pois ela é considerada uma extensão legítima e homologada da Chrome Web Store.
+        </p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
