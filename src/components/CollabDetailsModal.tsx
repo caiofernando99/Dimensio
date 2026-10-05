@@ -239,7 +239,7 @@ export const CollabDetailsModal: React.FC<CollabDetailsModalProps> = ({ collab, 
               </div>
               <div>
                 <div className="text-[9px] font-black uppercase opacity-80">Escala</div>
-                <div className="font-extrabold text-[var(--ink)]">Turma {collab.scale || 'A'}</div>
+                <div className="font-extrabold text-[var(--ink)]">Turma {collab.scale || '—'}</div>
               </div>
               <div>
                 <div className="text-[9px] font-black uppercase opacity-80">Time / TL</div>

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { DimensioLogo, DimensioMonogram } from './DimensioLogo';
 import { useApp } from '../context/AppContext';
+import { useI18n } from '../i18n';
 import { APP_VERSION, GIT_COMMIT, BUILD_TS, GIT_BRANCH } from '../version';
 
 interface SidebarProps {
@@ -75,7 +76,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
 }) => {
   const { state, toggleSidebarCollapsed, setIsWidgetsModalOpen } = useApp();
+  const { t } = useI18n();
   const isCollapsed = Boolean(state.isSidebarCollapsed);
+
+  const getNavLabel = (id: string, defaultLabel: string): string => {
+    const keyMap: Record<string, string> = {
+      presence: 'nav.presence',
+      employee: 'nav.employee',
+      routines: 'nav.routinesAndTasks',
+      assignment: 'nav.assignment',
+      breaks: 'nav.breaks',
+      calendar: 'nav.calendar',
+      team: 'nav.teamAndRecords',
+      share: 'nav.shareSummary',
+      info_hub: 'nav.infoHub',
+      briefing: 'nav.slideBriefing',
+      requests: 'nav.serviceRequests',
+      report: 'nav.dailyReport',
+      home: 'nav.overview',
+      settings: 'nav.settings',
+      help: 'nav.help',
+    };
+    return keyMap[id] ? t(keyMap[id]) : defaultLabel;
+  };
+
+  const getSectionName = (sec: string): string => {
+    const secMap: Record<string, string> = {
+      Operação: 'nav.sections.operation',
+      Planejamento: 'nav.sections.planning',
+      Comunicação: 'nav.sections.communication',
+      Gestão: 'nav.sections.management',
+      Sistema: 'nav.sections.system',
+    };
+    return secMap[sec] ? t(secMap[sec]) : sec;
+  };
 
   useEffect(() => {
     if (isMobileOpen) {
@@ -127,7 +161,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const renderNavItem = (item: (typeof navItems)[number], showSectionLabel: boolean, showSectionHeader: boolean) => {
     const Icon = item.icon;
     const isActive = currentView === item.id;
-    const sectionName = ITEM_SECTION[item.id];
+    const label = getNavLabel(item.id, item.label);
+    const sectionName = getSectionName(ITEM_SECTION[item.id] || '');
 
     return (
       <React.Fragment key={item.id}>
@@ -141,7 +176,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => handleSelect(item.id)}
           title={
             isCollapsed
-              ? `${item.label}${item.shortcut ? ` (Atalho: ${item.shortcut})` : ''}`
+              ? `${label}${item.shortcut ? ` (Atalho: ${item.shortcut})` : ''}`
               : undefined
           }
           className={`w-full flex items-center rounded-lg transition-colors duration-150 cursor-pointer ${
@@ -158,7 +193,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               isCollapsed ? 'max-w-0 opacity-0' : 'max-w-full opacity-100'
             }`}
           >
-            <span className="truncate">{item.label}</span>
+            <span className="truncate">{label}</span>
             {item.shortcut && (
               <span
                 className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 ${
@@ -198,7 +233,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               setIsWidgetsModalOpen(true);
               if (onCloseMobile) onCloseMobile();
             }}
-            title={isCollapsed ? 'Central de Widgets & Menu' : undefined}
+            title={isCollapsed ? t('nav.widgets') : undefined}
             className={`w-full flex items-center rounded-lg transition-colors duration-150 cursor-pointer bg-white/[0.06] hover:bg-white/[0.12] text-white/90 ${
               isCollapsed ? 'justify-center gap-0 p-2.5' : 'gap-2.5 px-3 py-2 text-xs font-bold'
             }`}
@@ -209,7 +244,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 isCollapsed ? 'max-w-0 opacity-0' : 'max-w-full opacity-100'
               }`}
             >
-              <span className="truncate">Central de Widgets</span>
+              <span className="truncate">{t('nav.widgets')}</span>
               {hiddenItems.size > 0 && (
                 <span className="text-[9.5px] px-1.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 font-black">
                   +{hiddenItems.size}

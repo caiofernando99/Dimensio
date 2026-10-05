@@ -143,7 +143,7 @@ export const CollaboratorModal: React.FC<CollaboratorModalProps> = ({
 
   // Sorted catalogs for alphabetical display
   const sortedShifts = [...availableShifts].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
-  const sortedScaleGroups = (availableScaleGroups && availableScaleGroups.length > 0 ? availableScaleGroups : ['A', 'B', 'C', 'D']);
+  const sortedScaleGroups = [...(availableScaleGroups || [])].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
   const sortedTeamLeaders = [...availableTeamLeaders].sort((a, b) => a.localeCompare(b, 'pt-BR'));
   const sortedRoles = [...availableRoles].sort((a, b) => a.localeCompare(b, 'pt-BR'));
   const sortedCategories = [...availableCategories].sort((a, b) => a.localeCompare(b, 'pt-BR'));
@@ -197,7 +197,7 @@ export const CollaboratorModal: React.FC<CollaboratorModalProps> = ({
       login: login.trim() || undefined,
       registration: registration.trim() || undefined,
       shift: shift || 'Geral',
-      scale: scale || 'A',
+      scale: scale || '',
       teamLeader: teamLeader || 'Sem Time',
       role: role || (availableRoles[0] || 'Operador de Processo'),
       category: category || (availableCategories[0] || 'Inbound'),
@@ -373,16 +373,17 @@ export const CollaboratorModal: React.FC<CollaboratorModalProps> = ({
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black text-[var(--ink)] uppercase tracking-wider flex items-center gap-1">
                     <Calendar className="w-3.5 h-3.5 text-[var(--primary)]" />
-                    <span>Escala 6x2</span>
+                    <span>Turma</span>
                   </label>
                   <select
                     value={scale}
                     onChange={(e) => setScale(e.target.value)}
                     className="w-full p-2.5 bg-[var(--bg)] border border-[var(--line)] rounded-xl text-xs font-bold text-[var(--ink)]"
                   >
+                    <option value="">Selecione a turma{sortedScaleGroups.length === 0 ? ' (cadastre turmas no Calendário)' : ''}</option>
                     {sortedScaleGroups.map((g) => (
                       <option key={g} value={g}>
-                        Letra {g}
+                        {g}
                       </option>
                     ))}
                   </select>

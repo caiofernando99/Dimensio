@@ -17,7 +17,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggleMobileMenu, onOpenShiftModal }) => {
   const { state, setDate, identifiedUser, getUnreadNotificationsCount } = useApp();
-  const { language, setLanguage, availableLanguages } = useI18n();
+  const { t, language, setLanguage, availableLanguages } = useI18n();
   const [isIdentifyModalOpen, setIsIdentifyModalOpen] = useState(false);
   const [isNotifModalOpen, setIsNotifModalOpen] = useState(false);
   const [onlineLeaders, setOnlineLeaders] = useState<CloudPresenceUser[]>([]);
@@ -94,10 +94,10 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
                   ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
                   : 'bg-[var(--primary-soft)] text-[var(--primary)] border-[var(--primary-border)] hover:bg-[var(--primary)] hover:text-white'
               }`}
-              title="Clique para alterar o turno de trabalho desta sessão"
+              title={t('header.changeShiftTooltip')}
             >
               {isAllShift ? <Globe className="w-2.5 h-2.5" /> : <Clock className="w-2.5 h-2.5" />}
-              <span>{isAllShift ? 'Setor Completo' : `Turno ${state.teamShift}`}</span>
+              <span>{isAllShift ? t('header.allSector') : t('header.shiftNumber', { shift: state.teamShift || '1' })}</span>
             </button>
 
             {/* Online Leaders Cloud Indicator */}
@@ -107,7 +107,7 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
                 title={`Usuários online no Firestore: ${onlineLeaders.map((u) => u.name).join(', ')}`}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
-                <span>{onlineLeaders.length} online</span>
+                <span>{t('header.onlineCount', { count: onlineLeaders.length })}</span>
               </span>
             )}
           </div>
@@ -128,7 +128,7 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
               value={activeDate}
               onChange={(e) => setDate(e.target.value)}
               className="bg-transparent text-[10px] sm:text-[11px] font-bold text-[var(--ink)] focus:outline-none cursor-pointer w-[86px] sm:max-w-[104px]"
-              aria-label="Data da Operação"
+              aria-label={t('header.dateOfOperation')}
             />
           </div>
 
@@ -170,14 +170,14 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
                 ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
                 : 'bg-[var(--bg)] text-[var(--muted)] border-[var(--line)] hover:text-[var(--ink)]'
             }`}
-            title={identifiedUser ? `Identificado como ${identifiedUser.name}` : 'Identificar-se'}
+            title={identifiedUser ? t('header.identifiedAs', { name: identifiedUser.name }) : t('header.identify')}
           >
             {identifiedUser ? (
               <UserCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
             ) : (
               <User className="w-3.5 h-3.5 shrink-0" />
             )}
-            <span className="max-w-[70px] truncate">{identifiedUser ? identifiedUser.name : 'Identificar'}</span>
+            <span className="max-w-[70px] truncate">{identifiedUser ? identifiedUser.name : t('header.identify')}</span>
           </button>
 
           {/* Language Selector */}
@@ -217,10 +217,10 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
             <button
               onClick={onOpenGuide}
               className="hidden sm:flex px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10.5px] font-black transition-colors items-center gap-1 cursor-pointer shrink-0"
-              title="Abrir Central de Ajuda"
+              title={t('header.openHelp')}
             >
               <BookOpen className="w-3.5 h-3.5" />
-              <span className="hidden xl:inline">Ajuda</span>
+              <span className="hidden xl:inline">{t('header.openHelp')}</span>
             </button>
           )}
         </div>

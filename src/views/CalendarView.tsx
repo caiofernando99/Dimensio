@@ -4,7 +4,6 @@ import {
   Download,
   Upload,
   Calendar as CalendarIcon,
-  Sparkles,
   Settings,
   Check,
   CalendarCheck2,
@@ -21,27 +20,37 @@ import {
   MapPin,
   Trash2,
   CheckCheck,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
-import { SUGGESTED_CALENDAR_2026 } from '../utils/suggestedScale';
-import { PageHeader, Card, Toolbar, Button, Badge, Select, Modal, Input } from '../components/ui';
-import { getCollaboratorStatus } from '../utils/helpers';
+import { PageHeader, Card, Toolbar, Button, Badge, Modal, Input } from '../components/ui';
+import { getCollaboratorStatus, getDayOffGroups, getDayHoliday, normalizeCalendarDay } from '../utils/helpers';
 import { isTaskDueOnDate, formatRecurrenceLabel } from '../utils/routineHelpers';
 import { STATUS_BADGE_CLASSES } from '../constants';
 import { Collaborator, ScheduledTask } from '../types';
 import { fetchCalendarEvents, createCalendarEvent, deleteCalendarEvent, CalendarEventItem } from '../lib/workspace';
 import { getAccessToken } from '../lib/firebase';
 
-const DEFAULT_GROUPS = ['A', 'B', 'C', 'D'];
-const GROUP_COLORS = [
-  'bg-red-500 text-white',
-  'bg-amber-400 text-slate-900',
-  'bg-teal-400 text-slate-900',
-  'bg-indigo-400 text-white',
-  'bg-emerald-500 text-white',
-  'bg-fuchsia-500 text-white',
-  'bg-sky-500 text-white',
-  'bg-orange-500 text-white',
+// Paleta selecionável de cores das turmas. Cada turma criada pelo usuário
+// recebe uma cor da paleta (editável). O `hex` alimenta o fundo dos dias com
+// múltiplas folgas (gradiente); o `cls` mantém o estilo atual nos selos.
+export const CREW_PALETTE: Array<{ hex: string; cls: string }> = [
+  { hex: '#ef4444', cls: 'bg-red-500 text-white' },
+  { hex: '#fbbf24', cls: 'bg-amber-400 text-slate-900' },
+  { hex: '#2dd4bf', cls: 'bg-teal-400 text-slate-900' },
+  { hex: '#818cf8', cls: 'bg-indigo-400 text-white' },
+  { hex: '#10b981', cls: 'bg-emerald-500 text-white' },
+  { hex: '#d946ef', cls: 'bg-fuchsia-500 text-white' },
+  { hex: '#0ea5e9', cls: 'bg-sky-500 text-white' },
+  { hex: '#f97316', cls: 'bg-orange-500 text-white' },
 ];
+
+/** Fundo em fatias quando 2+ turmas folgam no mesmo dia. */
+export function multiCrewBackground(hexes: string[]): string {
+  const n = hexes.length;
+  const stops = hexes.map((h, i) => `${h} ${(i * 100) / n}% ${((i + 1) * 100) / n}%`).join(', ');
+  return `linear-gradient(135deg, ${stops})`;
+}
 
 const MONTH_NAMES = [
   'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
@@ -66,6 +75,12 @@ export const CalendarView: React.FC = () => {
     state,
     setYear,
     markDayScale,
+    setDayHoliday,
+    setDayOffGroups,
+    addCalendarEvent,
+    removeCalendarEvent,
+    upsertScaleGroup,
+    removeScaleGroup,
     setDate,
     showNotice,
     importFullState,
@@ -75,8 +90,40 @@ export const CalendarView: React.FC = () => {
     syncTaskToGoogleTasks,
     syncTasksToGoogleWorkspace,
   } = useApp();
-  const scaleGroups = state.scaleGroups && state.scaleGroups.length > 0 ? state.scaleGroups : DEFAULT_GROUPS;
-  const [selectedOff, setSelectedOff] = useState<string>('A');
+  // Zero turmas por padrão: tudo é criado pelo usuário. Sem fallback A-D.
+  const scaleGroups = state.scaleGroups || [];
+  const crewDefs = state.scaleGroupDefs || [];
+  const [selectedOff, setSelectedOff] = useState<string[]>([]);
+  const [newCrewName, setNewCrewName] = useState<string>('');
+  const [newCrewColor, setNewCrewColor] = useState<string>(CREW_PALETTE[0].hex);
+
+  const paletteEntryFor = (hex?: string) =>
+    CREW_PALETTE.find((p) => p.hex.toLowerCase() === (hex || '').toLowerCase());
+
+  const hexForGroup = (group: string): string => {
+    const def = crewDefs.find((d) => d.name === group || d.id === group);
+    if (def?.color) {
+      const pal = paletteEntryFor(def.color);
+      if (pal) return pal.hex;
+      return def.color;
+    }
+    const idx = scaleGroups.indexOf(group);
+    if (idx === -1) return '#64748b';
+    return CREW_PALETTE[idx % CREW_PALETTE.length].hex;
+  };
+
+  const colorForGroup = (group: string): string => {
+    const def = crewDefs.find((d) => d.name === group || d.id === group);
+    if (def?.color) {
+      const pal = paletteEntryFor(def.color);
+      if (pal) return pal.cls;
+    }
+    const idx = scaleGroups.indexOf(group);
+    if (idx === -1) return 'bg-slate-400 text-white';
+    return CREW_PALETTE[idx % CREW_PALETTE.length].cls;
+  };
+  const [holidayDraft, setHolidayDraft] = useState<Record<string, { title: string; allowWork: boolean }>>({});
+  const [localEventDraft, setLocalEventDraft] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<'view' | 'config'>('view');
   const [detailDay, setDetailDay] = useState<string | null>(null);
   const [showTasksInCalendar, setShowTasksInCalendar] = useState<boolean>(true);
@@ -195,59 +242,55 @@ export const CalendarView: React.FC = () => {
     }
   };
 
-  const colorForGroup = (group: string): string => {
-    const idx = scaleGroups.indexOf(group);
-    if (idx === -1) return 'bg-slate-400 text-white';
-    return GROUP_COLORS[idx % GROUP_COLORS.length];
-  };
-
+  // Multi-folga: alterna cada turma selecionada no dia (mantém feriado).
   const handleDayClick = (dayStr: string) => {
-    markDayScale(dayStr, selectedOff as any);
-  };
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (mode !== 'config') return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'SELECT' ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-      const key = e.key.toLowerCase();
-      if (!['a', 'b', 'c', 'd'].includes(key)) return;
-      const group = key.toUpperCase();
-      if (!scaleGroups.includes(group)) return;
-      e.preventDefault();
-      setSelectedOff(group);
-      const active = document.activeElement as HTMLElement | null;
-      if (active?.dataset?.day) {
-        markDayScale(active.dataset.day, group as any);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [scaleGroups, markDayScale, mode]);
-
-  const handleLoadSuggestedScale = () => {
-    importFullState({
-      calendar: { ...state.calendar, ...SUGGESTED_CALENDAR_2026 },
-      year: 2026,
+    if (selectedOff.length === 0) {
+      markDayScale(dayStr, '');
+      return;
+    }
+    const current = getDayOffGroups(state.calendar, dayStr);
+    const next = [...current];
+    selectedOff.forEach((g) => {
+      const i = next.indexOf(g);
+      if (i >= 0) next.splice(i, 1);
+      else next.push(g);
     });
-    setYear(2026);
-    showNotice('Escala Sugerida de 2026 carregada com sucesso no calendário!');
+    setDayOffGroups(dayStr, next);
   };
+
+  const toggleSelectedOff = (group: string) => {
+    setSelectedOff((prev) => (prev.includes(group) ? prev.filter((g) => g !== group) : [...prev, group]));
+  };
+
+  const handleAddCrew = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const name = newCrewName.trim();
+    if (!name) return;
+    if (scaleGroups.includes(name)) {
+      showNotice(`Turma "${name}" já existe.`);
+      return;
+    }
+    upsertScaleGroup(name, { color: newCrewColor });
+    setNewCrewName('');
+    // Avança a cor padrão para a próxima da paleta.
+    const nextIdx = (CREW_PALETTE.findIndex((p) => p.hex === newCrewColor) + 1) % CREW_PALETTE.length;
+    setNewCrewColor(CREW_PALETTE[nextIdx >= 0 ? nextIdx : 0].hex);
+    setSelectedOff((prev) => [...prev, name]);
+    showNotice(`Turma "${name}" criada! Defina suas próprias turmas livremente.`);
+  };
+
+  // Sem atalhos de teclado no calendário: as teclas numéricas conflitavam com
+  // outros atalhos do app. A seleção de turmas é feita por clique/toque.
 
   const handleExportCalendar = () => {
     const data = {
       type: 'people-scheduler-calendar',
-      version: 3,
+      version: 4,
       year: state.year,
       calendar: state.calendar,
+      calendarEvents: state.calendarEvents || {},
+      scaleGroups: state.scaleGroups,
+      scaleGroupDefs: state.scaleGroupDefs || [],
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -272,9 +315,12 @@ export const CalendarView: React.FC = () => {
           if (calendarData) {
             importFullState({
               calendar: { ...state.calendar, ...calendarData },
+              ...(json.calendarEvents ? { calendarEvents: { ...(state.calendarEvents || {}), ...json.calendarEvents } } : {}),
+              ...(json.scaleGroups ? { scaleGroups: json.scaleGroups } : {}),
+              ...(json.scaleGroupDefs ? { scaleGroupDefs: json.scaleGroupDefs } : {}),
               ...(json.year ? { year: json.year } : {}),
             });
-            showNotice('Calendário de escala importado com sucesso!');
+            showNotice('Calendário de escala importado com sucesso (folgas + feriados + turmas)!');
           } else {
             showNotice('Arquivo JSON não possui dados de calendário válidos.');
           }
@@ -318,7 +364,16 @@ export const CalendarView: React.FC = () => {
             ))}
             {days.map((dayNum) => {
               const dayStr = `${state.year}-${String(monthIndex + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
-              const offGroup = state.calendar[dayStr];
+              const offGroups = getDayOffGroups(state.calendar, dayStr);
+              const holiday = getDayHoliday(state.calendar, dayStr);
+              const localEvents = (state.calendarEvents || {})[dayStr] || [];
+              const primaryGroup = offGroups[0];
+              // 2+ turmas em folga: fundo fatiado com as cores das turmas.
+              const dayHexes = offGroups.map(hexForGroup);
+              const multiStyle: React.CSSProperties | undefined =
+                dayHexes.length > 1
+                  ? { background: multiCrewBackground(dayHexes), color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,.55)' }
+                  : undefined;
               const isSelectedDay = dayStr === state.selectedDate;
               const isPast = dayStr < todayStr;
               const dayTasks = activeTasks.filter((t) => isTaskDueOnDate(t, dayStr, state.calendar));
@@ -333,32 +388,46 @@ export const CalendarView: React.FC = () => {
                   data-day={dayStr}
                   onClick={() => (mode === 'config' ? handleDayClick(dayStr) : setDetailDay(dayStr))}
                   onDoubleClick={() => setDate(dayStr)}
+                  style={multiStyle}
                   className={`aspect-square text-[9.5px] font-bold rounded flex flex-col items-center justify-center relative transition-all cursor-pointer ${
-                    offGroup ? colorForGroup(offGroup) : 'bg-[var(--surface-2)] hover:bg-[var(--primary-soft)] hover:text-[var(--primary)] text-[var(--ink)]'
-                  } ${isSelectedDay ? 'ring-2 ring-[var(--ink)] font-black scale-105' : ''} ${isPast && mode === 'view' && !offGroup ? 'opacity-80' : ''}`}
+                    dayHexes.length > 1
+                      ? ''
+                      : primaryGroup
+                        ? colorForGroup(primaryGroup)
+                        : 'bg-[var(--surface-2)] hover:bg-[var(--primary-soft)] hover:text-[var(--primary)] text-[var(--ink)]'
+                  } ${holiday.isHoliday ? 'ring-1 ring-rose-500/70' : ''} ${isSelectedDay ? 'ring-2 ring-[var(--ink)] font-black scale-105' : ''} ${isPast && mode === 'view' && offGroups.length === 0 ? 'opacity-80' : ''}`}
                   title={
                     mode === 'config'
-                      ? offGroup
-                        ? `Folga Turma ${offGroup} (clique para mudar)`
+                      ? offGroups.length > 0
+                        ? `Folga: ${offGroups.join(', ')} (clique para alternar)`
                         : 'Clique para marcar folga'
-                      : `${offGroup ? `Folga Turma ${offGroup}` : 'Dia de Trabalho'}${dayTasks.length > 0 ? ` • ${dayTasks.length} tarefa(s)` : ''}${dayGoogleEvents.length > 0 ? ` • ${dayGoogleEvents.length} evento(s) no Calendar` : ''}`
+                      : `${offGroups.length > 0 ? `Folga: ${offGroups.join(', ')}` : 'Dia de Trabalho'}${holiday.isHoliday ? ` • 🎉 ${holiday.title || 'Feriado'}${holiday.allowWork ? ' (com trabalho)' : ''}` : ''}${localEvents.length > 0 ? ` • ${localEvents.length} evento(s)` : ''}${dayTasks.length > 0 ? ` • ${dayTasks.length} tarefa(s)` : ''}${dayGoogleEvents.length > 0 ? ` • ${dayGoogleEvents.length} evento(s) no Calendar` : ''}`
                   }
                 >
                   <span>{dayNum}</span>
+                  {holiday.isHoliday && <span className="text-[7px] leading-none">🎉</span>}
+                  {offGroups.length > 1 && (
+                    <span className="text-[7px] leading-tight opacity-90 truncate max-w-full px-0.5">
+                      {offGroups.join('·')}
+                    </span>
+                  )}
+                  {localEvents.length > 0 && mode === 'view' && (
+                    <span className="absolute top-0 left-0.5 w-1.5 h-1.5 rounded-full bg-rose-500 ring-1 ring-white" />
+                  )}
                   {/* Indicators for tasks & google events */}
                   {mode === 'view' && (dayTasks.length > 0 || (showGoogleEvents && dayGoogleEvents.length > 0)) && (
                     <div className="absolute bottom-0.5 flex items-center gap-0.5">
                       {dayTasks.length > 0 && (
                         <span
                           className={`w-1.5 h-1.5 rounded-full ${
-                            offGroup ? 'bg-white ring-1 ring-black/30' : 'bg-[var(--primary)]'
+                            primaryGroup ? 'bg-white ring-1 ring-black/30' : 'bg-[var(--primary)]'
                           }`}
                         />
                       )}
                       {showGoogleEvents && dayGoogleEvents.length > 0 && (
                         <span
                           className={`w-1.5 h-1.5 rounded-full ${
-                            offGroup ? 'bg-sky-200 ring-1 ring-black/30' : 'bg-sky-500'
+                            primaryGroup ? 'bg-sky-200 ring-1 ring-black/30' : 'bg-sky-500'
                           }`}
                           title={`${dayGoogleEvents.length} evento(s) do Google Calendar`}
                         />
@@ -372,22 +441,29 @@ export const CalendarView: React.FC = () => {
         </div>
       );
     };
-  }, [state.year, state.calendar, state.selectedDate, markDayScale, setDate, mode, todayStr, activeTasks, googleEvents, showGoogleEvents]);
+  }, [state.year, state.calendar, state.calendarEvents, state.selectedDate, state.scaleGroups, state.scaleGroupDefs, markDayScale, setDayOffGroups, setDate, mode, todayStr, activeTasks, googleEvents, showGoogleEvents]);
 
   const buildDayDetail = (dayStr: string) => {
     const [y, m, d] = dayStr.split('-').map(Number);
     const dateObj = new Date(y, m - 1, d);
     const weekday = dateObj.toLocaleDateString('pt-BR', { weekday: 'long' });
     const fullDate = dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
-    const offGroup = state.calendar[dayStr];
+    const offGroups = getDayOffGroups(state.calendar, dayStr);
+    const holiday = getDayHoliday(state.calendar, dayStr);
+    const localEvents = (state.calendarEvents || {})[dayStr] || [];
     const isPast = dayStr < todayStr;
 
     const counts: Record<string, number> = {};
     const offCollaborators: Collaborator[] = [];
+    const offByGroup: Record<string, Collaborator[]> = {};
     state.collaborators.forEach((c) => {
       const st = getCollaboratorStatus(c, dayStr, state).status;
       counts[st] = (counts[st] || 0) + 1;
-      if (offGroup && c.scale === offGroup) offCollaborators.push(c);
+      if (offGroups.includes(c.scale)) {
+        offCollaborators.push(c);
+        if (!offByGroup[c.scale]) offByGroup[c.scale] = [];
+        offByGroup[c.scale].push(c);
+      }
     });
 
     const historyEntry = state.history.find((h) => h.date === dayStr);
@@ -398,7 +474,7 @@ export const CalendarView: React.FC = () => {
       return evDate === dayStr;
     });
 
-    return { weekday, fullDate, offGroup, isPast, counts, offCollaborators, historyEntry, manualOverrides, dayTasks, dayGoogleEvents };
+    return { weekday, fullDate, offGroups, offGroup: offGroups[0], holiday, localEvents, isPast, counts, offCollaborators, offByGroup, historyEntry, manualOverrides, dayTasks, dayGoogleEvents };
   };
 
   return (
@@ -438,53 +514,94 @@ export const CalendarView: React.FC = () => {
 
       <Card>
         <Toolbar>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <label className="font-extrabold text-[var(--muted)] text-[11px]">Ano:</label>
-            <Select
-              value={state.year}
-              onChange={(e) => setYear(Number(e.target.value))}
-              className="w-auto !h-8 text-xs"
+            <button
+              onClick={() => setYear(state.year - 1)}
+              className="p-1.5 rounded-lg bg-[var(--surface-2)] border border-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)] transition-colors cursor-pointer"
+              title="Ano anterior"
             >
-              <option value={state.year - 1}>{state.year - 1}</option>
-              <option value={state.year}>{state.year}</option>
-              <option value={state.year + 1}>{state.year + 1}</option>
-            </Select>
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <Input
+              type="number"
+              value={state.year}
+              onChange={(e) => {
+                const y = Number(e.target.value);
+                if (Number.isFinite(y) && y >= 1900 && y <= 2200) setYear(Math.trunc(y));
+              }}
+              className="!h-8 !text-xs w-20 text-center"
+            />
+            <button
+              onClick={() => setYear(state.year + 1)}
+              className="p-1.5 rounded-lg bg-[var(--surface-2)] border border-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)] transition-colors cursor-pointer"
+              title="Próximo ano"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
           </div>
 
           {mode === 'config' && (
-            <div className="flex items-center gap-2">
-              <label className="font-extrabold text-[var(--muted)] text-[11px]">Folga Para:</label>
-              <div className="flex items-center gap-1">
-                {scaleGroups.map((grp) => (
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="font-extrabold text-[var(--muted)] text-[11px]">Folga Para (pode marcar várias):</label>
+              {scaleGroups.length === 0 ? (
+                <span className="text-[11px] text-[var(--muted)] italic font-bold">
+                  Nenhuma turma cadastrada — crie a primeira abaixo para começar a marcar folgas.
+                </span>
+              ) : (
+                <div className="flex flex-wrap items-center gap-1">
+                  {scaleGroups.map((grp) => (
+                    <button
+                      key={grp}
+                      onClick={() => toggleSelectedOff(grp)}
+                      title="Clique para selecionar/deselecionar"
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-black transition-all cursor-pointer ${
+                        selectedOff.includes(grp)
+                          ? `${colorForGroup(grp)} ring-2 ring-[var(--ink)] shadow-2xs`
+                          : 'bg-[var(--surface-2)] text-[var(--ink)] border border-[var(--line)] hover:border-[var(--primary-border)]'
+                      }`}
+                    >
+                      {grp}
+                    </button>
+                  ))}
                   <button
-                    key={grp}
-                    onClick={() => setSelectedOff(grp)}
-                    className={`px-2.5 py-1 rounded-md text-[11px] font-black transition-all cursor-pointer ${
-                      selectedOff === grp
-                        ? `${colorForGroup(grp)} ring-2 ring-[var(--ink)] shadow-2xs`
-                        : 'bg-[var(--surface-2)] text-[var(--ink)] border border-[var(--line)] hover:border-[var(--primary-border)]'
-                    }`}
+                    onClick={() => setSelectedOff([])}
+                    className="px-2 py-1 rounded-md text-[10px] font-bold border border-[var(--line)] cursor-pointer bg-[var(--surface-2)] text-[var(--muted)]"
                   >
-                    Turma {grp}
+                    Limpar
                   </button>
-                ))}
-                <button
-                  onClick={() => setSelectedOff('')}
-                  className={`px-2 py-1 rounded-md text-[10px] font-bold border border-[var(--line)] cursor-pointer ${
-                    selectedOff === '' ? 'bg-[var(--line)] text-[var(--ink)]' : 'bg-[var(--surface-2)] text-[var(--muted)]'
-                  }`}
-                >
-                  Limpar
-                </button>
-              </div>
+                </div>
+              )}
+              <form onSubmit={handleAddCrew} className="flex flex-wrap items-center gap-1.5">
+                <Input
+                  value={newCrewName}
+                  onChange={(e) => setNewCrewName(e.target.value)}
+                  placeholder="Nova turma: ex. Alfa, Noturna..."
+                  className="!h-8 !text-xs w-44"
+                />
+                <div className="flex items-center gap-1" title="Cor da turma">
+                  {CREW_PALETTE.map((p) => (
+                    <button
+                      key={p.hex}
+                      type="button"
+                      onClick={() => setNewCrewColor(p.hex)}
+                      className={`w-5 h-5 rounded-full cursor-pointer transition-all ${p.cls.split(' ')[0]} ${
+                        newCrewColor === p.hex ? 'ring-2 ring-[var(--ink)] scale-110' : 'opacity-70 hover:opacity-100'
+                      }`}
+                      style={{ backgroundColor: p.hex }}
+                      title={`Cor ${p.hex}`}
+                    />
+                  ))}
+                </div>
+                <Button variant="outline" size="sm" icon={Plus} onClick={handleAddCrew}>
+                  Criar turma
+                </Button>
+              </form>
             </div>
           )}
 
           {mode === 'config' && (
             <div className="ml-auto flex items-center gap-2">
-              <Button variant="primary" size="sm" icon={Sparkles} onClick={handleLoadSuggestedScale} title="Preencher calendário com a sugestão oficial de escala 2026">
-                Escala 2026
-              </Button>
               <label className="inline-flex items-center justify-center h-8 px-3 text-xs gap-1.5 rounded-lg font-bold select-none cursor-pointer transition-all duration-150 active:scale-[0.98] bg-[var(--paper)] text-[var(--ink)] border border-[var(--line)] hover:bg-[var(--bg)]">
                 <Upload className="w-3.5 h-3.5" />
                 <span>Importar</span>
@@ -572,12 +689,19 @@ export const CalendarView: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2 text-[11px] font-bold">
-                {scaleGroups.map((grp) => (
-                  <div key={grp} className="flex items-center gap-1">
-                    <span className={`w-2.5 h-2.5 rounded-xs ${colorForGroup(grp)}`}></span>
-                    <span className="text-[var(--muted)]">T-{grp}</span>
-                  </div>
-                ))}
+                {scaleGroups.length === 0 ? (
+                  <span className="text-[var(--muted)] italic">Nenhuma turma cadastrada</span>
+                ) : (
+                  scaleGroups.map((grp) => (
+                    <div key={grp} className="flex items-center gap-1">
+                      <span
+                        className="w-2.5 h-2.5 rounded-xs ring-1 ring-black/20"
+                        style={{ backgroundColor: hexForGroup(grp) }}
+                      ></span>
+                      <span className="text-[var(--muted)]">{grp}</span>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           )}
@@ -585,17 +709,8 @@ export const CalendarView: React.FC = () => {
 
         {mode === 'config' && (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-bold text-[var(--muted)] border-t border-[var(--line)] pt-2.5">
-            <span>Atalhos de teclado:</span>
-            {scaleGroups.map((grp) => (
-              <kbd
-                key={grp}
-                className="px-1.5 py-0.5 rounded-md bg-[var(--surface-2)] border border-[var(--line)] font-mono text-[10px] text-[var(--ink)] shadow-xs"
-              >
-                {grp}
-              </kbd>
-            ))}
             <span className="text-[10px]">
-              seleciona a turma de folga · com um dia focado (Tab), a tecla marca a folga direto nele
+              Selecione as turmas e clique nos dias para marcar as folgas — várias turmas podem folgar no mesmo dia (o dia exibe as cores combinadas)
             </span>
             <Badge tone="primary" className="ml-auto">Fechar ano calendário: {state.year}</Badge>
           </div>
@@ -604,7 +719,53 @@ export const CalendarView: React.FC = () => {
         {mode === 'config' && (
           <div className="mt-3 flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs font-bold text-amber-800 dark:text-amber-300">
             <Settings className="w-3.5 h-3.5 shrink-0" />
-            <span>Modo de configuração ativo — clique nos dias para marcar a folga. Use "Concluir" para voltar à visualização.</span>
+            <span>Modo de configuração ativo — selecione as turmas e clique nos dias para marcar as folgas (várias por dia). Use "Concluir" para voltar à visualização.</span>
+          </div>
+        )}
+
+        {mode === 'config' && (
+          <div className="mt-3 border border-[var(--line)] rounded-xl p-3">
+            <h4 className="text-xs font-black text-[var(--ink)]">Minhas turmas</h4>
+            <p className="text-[11px] text-[var(--muted)] mt-0.5">Crie turmas com o nome e a cor que fizerem sentido na sua operação. Nenhuma turma vem pronta no app.</p>
+            <div className="mt-2 flex flex-col gap-2">
+              {scaleGroups.map((grp) => (
+                <div key={grp} className="flex flex-wrap items-center gap-2 px-2 py-1.5 bg-[var(--surface-2)] border border-[var(--line)] rounded-lg">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-black ${colorForGroup(grp)}`}>
+                    {grp}
+                  </span>
+                  <div className="flex items-center gap-1" title={`Cor da turma ${grp}`}>
+                    {CREW_PALETTE.map((p) => (
+                      <button
+                        key={p.hex}
+                        onClick={() => upsertScaleGroup(grp, { color: p.hex })}
+                        className={`w-5 h-5 rounded-full cursor-pointer transition-all ${
+                          hexForGroup(grp).toLowerCase() === p.hex.toLowerCase()
+                            ? 'ring-2 ring-[var(--ink)] scale-110'
+                            : 'opacity-60 hover:opacity-100'
+                        }`}
+                        style={{ backgroundColor: p.hex }}
+                        title={`${grp} → ${p.hex}`}
+                      />
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (confirm(`Remover a turma "${grp}"? Os dias marcados com ela serão mantidos como histórico.`)) {
+                        removeScaleGroup(grp);
+                        setSelectedOff((prev) => prev.filter((g) => g !== grp));
+                      }
+                    }}
+                    className="ml-auto p-1 text-[var(--muted)] hover:text-rose-600 cursor-pointer"
+                    title={`Remover turma ${grp}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+              {scaleGroups.length === 0 && (
+                <span className="text-[11px] text-[var(--muted)] italic">Nenhuma turma cadastrada — crie a primeira no campo acima.</span>
+              )}
+            </div>
           </div>
         )}
       </Card>
@@ -644,19 +805,140 @@ export const CalendarView: React.FC = () => {
             }
           >
             <div className="space-y-4">
-              {/* Scale status */}
+              {/* Scale status (multi-folga + feriado com título; feriado pode ter trabalho) */}
               <div className="flex flex-wrap items-center gap-2">
-                {detail.offGroup ? (
-                  <Badge tone="primary" className={`${colorForGroup(detail.offGroup)} border border-black/10`}>
-                    <CalendarIcon className="w-3 h-3 shrink-0" />
-                    Folga da Turma {detail.offGroup}
-                  </Badge>
+                {detail.offGroups.length > 0 ? (
+                  detail.offGroups.map((g) => (
+                    <Badge key={g} tone="primary" className={`${colorForGroup(g)} border border-black/10`}>
+                      <CalendarIcon className="w-3 h-3 shrink-0" />
+                      Folga: {g}
+                    </Badge>
+                  ))
                 ) : (
                   <Badge tone="neutral">Dia normal de trabalho</Badge>
+                )}
+                {detail.holiday.isHoliday && (
+                  <Badge tone="warning">
+                    🎉 {detail.holiday.title || 'Feriado'}{detail.holiday.allowWork ? ' (com trabalho)' : ''}
+                  </Badge>
                 )}
                 {detail.isPast && (
                   <Badge tone="info">Dados registrados deste dia</Badge>
                 )}
+              </div>
+
+              {/* Feriado com título + eventos locais */}
+              <div className="border border-[var(--line)] rounded-xl p-3 space-y-2 bg-[var(--surface-2)]/50">
+                <h4 className="text-xs font-black text-[var(--ink)]">🎉 Feriado / Eventos do dia ({detail.localEvents.length})</h4>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Input
+                    placeholder="Título do feriado — ex: Natal, Tiradentes..."
+                    value={holidayDraft[detailDay]?.title ?? detail.holiday.title ?? ''}
+                    onChange={(e) =>
+                      setHolidayDraft((prev) => ({
+                        ...prev,
+                        [detailDay]: {
+                          title: e.target.value,
+                          allowWork: prev[detailDay]?.allowWork ?? detail.holiday.allowWork ?? true,
+                        },
+                      }))
+                    }
+                    className="!text-xs"
+                  />
+                  <label className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--muted)] whitespace-nowrap cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={holidayDraft[detailDay]?.allowWork ?? detail.holiday.allowWork ?? true}
+                      onChange={(e) =>
+                        setHolidayDraft((prev) => ({
+                          ...prev,
+                          [detailDay]: {
+                            title: prev[detailDay]?.title ?? detail.holiday.title ?? '',
+                            allowWork: e.target.checked,
+                          },
+                        }))
+                      }
+                    />
+                    <span>Permitir trabalho no feriado</span>
+                  </label>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    icon={Check}
+                    onClick={() => {
+                      const draft = holidayDraft[detailDay] ?? { title: detail.holiday.title ?? '', allowWork: detail.holiday.allowWork ?? true };
+                      if (!draft.title.trim()) {
+                        setDayHoliday(detailDay, null);
+                      } else {
+                        setDayHoliday(detailDay, { title: draft.title.trim(), isHoliday: true, allowWork: draft.allowWork });
+                      }
+                      setHolidayDraft((prev) => {
+                        const next = { ...prev };
+                        delete next[detailDay];
+                        return next;
+                      });
+                      showNotice(draft.title.trim() ? `Feriado "${draft.title.trim()}" salvo (trabalho ${draft.allowWork ? 'permitido' : 'pausado'}).` : 'Feriado removido.');
+                    }}
+                  >
+                    Salvar feriado
+                  </Button>
+                  {detail.holiday.isHoliday && (
+                    <Button variant="ghost" size="sm" icon={Trash2} onClick={() => {
+                      setDayHoliday(detailDay, null);
+                      setHolidayDraft((prev) => {
+                        const next = { ...prev };
+                        delete next[detailDay];
+                        return next;
+                      });
+                    }}>
+                      Remover feriado
+                    </Button>
+                  )}
+                </div>
+                {detail.localEvents.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {detail.localEvents.map((ev) => (
+                      <div key={ev.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-[var(--paper)] border border-[var(--line)] rounded-lg text-xs">
+                        <span className="font-bold text-[var(--ink)] truncate">
+                          {ev.type === 'feriado' ? '🎉 ' : ev.type === 'folga' ? '🛌 ' : '📌 '}{ev.title}
+                          {ev.startTime ? ` • ${ev.startTime}${ev.endTime ? `-${ev.endTime}` : ''}` : ''}
+                        </span>
+                        <button onClick={() => removeCalendarEvent(detailDay, ev.id)} className="text-rose-500 hover:text-rose-700 cursor-pointer" title="Remover evento">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-[var(--muted)] italic">Nenhum evento local neste dia.</p>
+                )}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const title = (localEventDraft[detailDay] || '').trim();
+                    if (!title) return;
+                    addCalendarEvent({ date: detailDay, title, type: 'evento', allowWork: true });
+                    setLocalEventDraft((prev) => ({ ...prev, [detailDay]: '' }));
+                  }}
+                  className="flex gap-1.5"
+                >
+                  <Input
+                    placeholder="Novo evento: ex. Manutenção, Auditoria..."
+                    value={localEventDraft[detailDay] || ''}
+                    onChange={(e) => setLocalEventDraft((prev) => ({ ...prev, [detailDay]: e.target.value }))}
+                    className="!text-xs"
+                  />
+                  <Button variant="outline" size="sm" icon={Plus} onClick={() => {
+                    const title = (localEventDraft[detailDay] || '').trim();
+                    if (!title) return;
+                    addCalendarEvent({ date: detailDay, title, type: 'evento', allowWork: true });
+                    setLocalEventDraft((prev) => ({ ...prev, [detailDay]: '' }));
+                  }}>
+                    Adicionar
+                  </Button>
+                </form>
               </div>
 
               {/* Day data summary */}
@@ -912,25 +1194,33 @@ export const CalendarView: React.FC = () => {
                 )}
               </div>
 
-              {/* Off group members */}
-              {detail.offGroup && detail.offCollaborators.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-black text-[var(--ink)] flex items-center gap-1.5 mb-2">
-                    <Users className="w-3.5 h-3.5 text-[var(--primary)]" />
-                    <span>Turma {detail.offGroup} em folga ({detail.offCollaborators.length})</span>
-                  </h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {detail.offCollaborators.slice(0, 14).map((c) => (
-                      <span key={c.id} className="px-2 py-0.5 bg-[var(--paper)] border border-[var(--line)] rounded-lg text-[10px] font-bold text-[var(--ink)]">
-                        {c.name}
-                      </span>
-                    ))}
-                    {detail.offCollaborators.length > 14 && (
-                      <span className="px-2 py-0.5 text-[10px] font-black text-[var(--muted)]">
-                        +{detail.offCollaborators.length - 14} mais
-                      </span>
-                    )}
-                  </div>
+              {/* Off group members (multi-turma) */}
+              {detail.offGroups.length > 0 && detail.offCollaborators.length > 0 && (
+                <div className="space-y-2">
+                  {detail.offGroups.map((g) => {
+                    const members = detail.offByGroup[g] || [];
+                    if (members.length === 0) return null;
+                    return (
+                      <div key={g}>
+                        <h4 className="text-xs font-black text-[var(--ink)] flex items-center gap-1.5 mb-2">
+                          <Users className="w-3.5 h-3.5 text-[var(--primary)]" />
+                          <span>Turma {g} em folga ({members.length})</span>
+                        </h4>
+                        <div className="flex flex-wrap gap-1.5">
+                          {members.slice(0, 14).map((c) => (
+                            <span key={c.id} className="px-2 py-0.5 bg-[var(--paper)] border border-[var(--line)] rounded-lg text-[10px] font-bold text-[var(--ink)]">
+                              {c.name}
+                            </span>
+                          ))}
+                          {members.length > 14 && (
+                            <span className="px-2 py-0.5 text-[10px] font-black text-[var(--muted)]">
+                              +{members.length - 14} mais
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

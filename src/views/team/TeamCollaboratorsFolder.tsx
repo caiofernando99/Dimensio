@@ -34,15 +34,16 @@ import {
 import { SearchInput } from '../../components/SearchInput';
 import { MultiSelectFilter } from '../../components/MultiSelectFilter';
 import { useApp } from '../../context/AppContext';
-import { Collaborator, ShiftGroup } from '../../types';
+import { Collaborator } from '../../types';
 import {
   matchesCollaboratorSearch,
+  scoreCollaboratorSearch,
   compareStringsBR,
   formatPersonName,
 } from '../../utils/helpers';
 import { collabMenuOnContext } from '../../utils/collabContextMenu';
 
-const SHIFT_GROUPS: ShiftGroup[] = ['A', 'B', 'C', 'D'];
+
 
 interface TeamCollaboratorsFolderProps {
   onOpenAddCollabModal: () => void;
@@ -155,6 +156,13 @@ export const TeamCollaboratorsFolder: React.FC<TeamCollaboratorsFolderProps> = (
       return matchesTL && matchesShift && matchesRole && matchesCategory && matchesSearchQuery;
     })
     .sort((a, b) => {
+      // Com busca ativa, relevância primeiro (nome próprio acima do time)
+      if (searchTerm.trim()) {
+        const scoreDiff =
+          scoreCollaboratorSearch(b, searchTerm, { defaultTeamLeader: state.defaultTeamLeader }) -
+          scoreCollaboratorSearch(a, searchTerm, { defaultTeamLeader: state.defaultTeamLeader });
+        if (scoreDiff !== 0) return scoreDiff;
+      }
       if (sortOrder === 'desc') {
         return compareStringsBR(b.name, a.name);
       }
@@ -564,20 +572,18 @@ export const TeamCollaboratorsFolder: React.FC<TeamCollaboratorsFolderProps> = (
                         </div>
                       </td>
 
-                      {/* Escala 6x2 */}
+                      {/* Turma */}
                       <td className="p-2 min-w-[70px]">
                         <select
                           value={c.scale}
                           onChange={(e) => updateCollaborator(c.id, { scale: e.target.value })}
                           className="bg-[var(--paper)] border border-[var(--line)] focus:border-[var(--primary)] text-[var(--ink)] rounded-md p-1 font-black text-xs cursor-pointer"
                         >
-                          {(state.scaleGroups && state.scaleGroups.length ? state.scaleGroups : SHIFT_GROUPS).map(
-                            (grp) => (
-                              <option key={grp} value={grp}>
-                                Turma {grp}
-                              </option>
-                            )
-                          )}
+                          {(state.scaleGroups || []).map((grp) => (
+                            <option key={grp} value={grp}>
+                              Turma {grp}
+                            </option>
+                          ))}
                         </select>
                       </td>
 

@@ -38,7 +38,7 @@ export const OnboardingTutorial: React.FC<OnboardingTutorialProps> = ({
       content: (
         <div className="space-y-3 text-xs leading-relaxed text-[var(--muted)]">
           <p>
-            O <strong>Dimensio Operacional</strong> foi desenvolvido para facilitar o dia a dia de gestores e Team Leaders em centros de distribuição, logística e operações.
+            O <strong>Dimensio Operacional</strong> foi desenvolvido para facilitar o dia a dia de gestores e líderes de equipe em operações com turnos e escalas.
           </p>
           <div className="bg-[var(--bg)] p-3 rounded-xl border border-[var(--line)] space-y-2">
             <div className="font-bold text-[var(--ink)] text-xs flex items-center gap-2">
@@ -46,7 +46,7 @@ export const OnboardingTutorial: React.FC<OnboardingTutorialProps> = ({
               <span>O que você poderá fazer:</span>
             </div>
             <ul className="list-disc list-inside space-y-1 pl-1">
-              <li>Controlar presença diária e ciclo de folgas 6x2 (Grupos A, B, C, D).</li>
+              <li>Controlar presença diária e folgas das turmas da sua operação.</li>
               <li>Filtrar dados rapidamente por <strong>Turno (T1 a T5)</strong> e por <strong>Team Leader (TL)</strong>.</li>
               <li>Gerenciar matriz de habilidades (**Expert, HV, OP.Maquina**) e cargos (**REP, PS, TL**).</li>
               <li>Dimensionar postos de trabalho e gerar o relatório diário do turno.</li>
@@ -113,7 +113,7 @@ export const OnboardingTutorial: React.FC<OnboardingTutorialProps> = ({
     },
     {
       title: 'Dimensionamento e Refeições',
-      subtitle: 'Alocação por qualificações e escala 6x2 sem estouro',
+      subtitle: 'Alocação por qualificações e escala das turmas sem estouro',
       icon: Calendar,
       iconBg: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
       content: (
@@ -125,7 +125,7 @@ export const OnboardingTutorial: React.FC<OnboardingTutorialProps> = ({
             <ul className="list-disc list-inside space-y-1">
               <li>Aloque pessoas de acordo com o cargo e a categoria permitidos.</li>
               <li>Ajuste horários de refeição para garantir cobertura do setor durante todo o turno.</li>
-              <li>O sistema identifica automaticamente quem está de folga pela escala 6x2 (Grupo A, B, C ou D).</li>
+              <li>O sistema identifica automaticamente quem está de folga pela escala das turmas.</li>
             </ul>
           </div>
         </div>

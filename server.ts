@@ -58,8 +58,37 @@ interface PresenceSyncEvent {
 
 let globalSignalSeq = 0;
 const signalStore: StoredSignalMessage[] = [];
-const MAX_SIGNALS = 1000;
-const SIGNAL_TTL_MS = 60000; // 60 seconds
+// ALÍVIO DE CARGA: TTL curto + teto baixo. Com polling de 1s por cliente,
+// 1000 msgs/60s virava O(N²) em operações com 20+ coletores. 300/20s é
+// suficiente para handshake WebRTC (que usa seq) sem estourar memória/CPU.
+const MAX_SIGNALS = 300;
+const SIGNAL_TTL_MS = 20000; // 20 seconds
+
+// Rate-limit simples em memória para /api/signal (anti-sobrecarga).
+// Permite rajadas de handshake PTT, mas barra polling abusivo (<500ms).
+const signalRateMap = new Map<string, { count: number; windowStart: number; lastTs: number }>();
+function checkSignalRate(req: express.Request): boolean {
+  const ip = (req.ip || req.socket?.remoteAddress || 'unknown') + '|' + (req.query.peer || req.body?.sender || '');
+  const now = Date.now();
+  const entry = signalRateMap.get(ip);
+  if (!entry || now - entry.windowStart > 10000) {
+    signalRateMap.set(ip, { count: 1, windowStart: now, lastTs: now });
+    return true;
+  }
+  // mínimo de 400ms entre polls do mesmo peer
+  if (now - entry.lastTs < 400) return false;
+  entry.count++;
+  entry.lastTs = now;
+  // máximo de 40 req / 10s por peer (~4x o polling padrão de 2.5s)
+  if (entry.count > 40) return false;
+  return true;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of signalRateMap) {
+    if (now - v.windowStart > 30000) signalRateMap.delete(k);
+  }
+}, 30000).unref?.();
 
 // Presence storage: date -> Map(identifier -> PresenceRecord)
 const presenceSnapshotStore: Record<string, Record<string, PresenceRecord>> = {};
@@ -248,8 +277,12 @@ app.post('/api/presence/state-sync', (req, res) => {
       if (!presenceSnapshotStore[activeDate]) {
         presenceSnapshotStore[activeDate] = {};
       }
-      const dayAtt = attendance[activeDate] || attendance;
+      // Só os overrides do dia ativo. O fallback antigo (`|| attendance`)
+      // iterava o mapa inteiro (chaveado por data) e criava colaboradores
+      // fantasmas com IDs como '2026-08-01' no snapshot.
+      const dayAtt = attendance[activeDate] || {};
       Object.entries(dayAtt).forEach(([collabId, statusVal]) => {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(collabId)) return; // nunca é um colaborador
         const collab = cachedCollaborators.find((c) => c.id === collabId);
         let status: PresenceRecord['status'] = 'presente';
         let reason = '';
@@ -829,17 +862,61 @@ interface DimensioStore {
   }>;
   infoHubReminders: Array<{
     id: string;
-    title: string;
-    message: string;
+    title?: string;
+    text?: string;
+    message?: string;
+    shift?: string;
     priority?: string;
+    authorName?: string;
     createdAt: string;
+    updatedAt?: string;
+    workspace?: string;
   }>;
   infoHubLinks: Array<{
     id: string;
     title: string;
     url: string;
     category?: string;
+    description?: string;
+    shift?: string;
+    showInPortal?: boolean;
+    workspace?: string;
+    updatedAt?: string;
   }>;
+  infoHubQuickFills: Array<{
+    id: string;
+    title: string;
+    category?: string;
+    description?: string;
+    shift?: string;
+    tags?: string[];
+    items?: Array<{ id: string; label: string; codeValue: string; description?: string }>;
+    triggerUrl?: string;
+    workspace?: string;
+    updatedAt?: string;
+  }>;
+}
+
+// Base compartilhada multi-app: workspace -> coleções. Permite que várias
+// aplicações (Dimensio, Totem, Painel, apps terceiros) leiam/escrevam o mesmo
+// Hub de Informações via ?workspace= ou header X-Workspace.
+const infoHubWorkspaces = new Map<string, { seq: number; updatedAt: number }>();
+function getWorkspace(req: express.Request): string {
+  const q = (req.query.workspace as string) || (req.query.app as string) || '';
+  const h = (req.headers['x-workspace'] as string) || (req.headers['x-app-id'] as string) || '';
+  const b = ((req.body as any)?.workspace as string) || ((req.body as any)?.app as string) || '';
+  return (q || h || b || 'default').toString().trim().toLowerCase().slice(0, 64) || 'default';
+}
+function touchWorkspace(ws: string) {
+  const entry = infoHubWorkspaces.get(ws) || { seq: 0, updatedAt: 0 };
+  entry.seq++;
+  entry.updatedAt = Date.now();
+  infoHubWorkspaces.set(ws, entry);
+  return entry;
+}
+function filterByWorkspace<T extends { workspace?: string }>(list: T[], ws: string): T[] {
+  if (ws === 'all') return list;
+  return list.filter((i) => !i.workspace || i.workspace === ws || ws === 'default');
 }
 
 const dimensioStore: DimensioStore = {
@@ -856,6 +933,7 @@ const dimensioStore: DimensioStore = {
   metricReadings: [],
   infoHubReminders: [],
   infoHubLinks: [],
+  infoHubQuickFills: [],
 };
 
 // Broadcast change helper
@@ -915,6 +993,9 @@ app.post('/api/dimensio/sync', (req, res) => {
     }
     if (Array.isArray(data.infoHubLinks)) {
       dimensioStore.infoHubLinks = data.infoHubLinks;
+    }
+    if (Array.isArray(data.infoHubQuickFills)) {
+      dimensioStore.infoHubQuickFills = data.infoHubQuickFills;
     }
 
     res.json({
@@ -1308,37 +1389,138 @@ app.post('/api/metrics/readings', (req, res) => {
   }
 });
 
-// ================= INFO HUB & BROADCAST RESOURCE =================
-app.get('/api/info-hub', (_req, res) => {
+// ================= INFO HUB SHARED BASE (multi-app) =================
+// Base compartilhável entre múltiplas aplicações via ?workspace= (ou header
+// X-Workspace). Cada workspace isola avisos/links/códigos, e `workspace=all`
+// agrega tudo. Suporta GET filtrado, CRUD por recurso e sync em lote.
+app.get('/api/info-hub', (req, res) => {
+  const ws = getWorkspace(req);
+  const type = ((req.query.type as string) || 'all').toLowerCase();
+  const search = ((req.query.search as string) || '').toLowerCase();
+  const shift = (req.query.shift as string) || '';
+  const match = (s?: string) => !search || (s || '').toLowerCase().includes(search);
+
+  let reminders = filterByWorkspace(dimensioStore.infoHubReminders, ws);
+  let links = filterByWorkspace(dimensioStore.infoHubLinks, ws);
+  let quickFills = filterByWorkspace(dimensioStore.infoHubQuickFills, ws);
+  if (shift) {
+    reminders = reminders.filter((r) => !r.shift || r.shift === 'Todos' || r.shift === shift);
+    links = links.filter((l) => !(l as any).shift || (l as any).shift === 'Todos' || (l as any).shift === shift);
+    quickFills = quickFills.filter((q) => !q.shift || q.shift === 'Todos' || q.shift === shift);
+  }
+  if (search) {
+    reminders = reminders.filter((r) => match(r.title) || match(r.text) || match(r.message));
+    links = links.filter((l) => match(l.title) || match(l.url) || match(l.category));
+    quickFills = quickFills.filter((q) => match(q.title) || match(q.category) || match(q.description));
+  }
+  const meta = infoHubWorkspaces.get(ws) || { seq: 0, updatedAt: 0 };
+  res.setHeader('Cache-Control', 'no-store');
   res.json({
     success: true,
-    reminders: dimensioStore.infoHubReminders,
-    links: dimensioStore.infoHubLinks,
+    workspace: ws,
+    seq: meta.seq,
+    updatedAt: meta.updatedAt,
+    counts: { reminders: reminders.length, links: links.length, quickFills: quickFills.length },
+    reminders: type === 'all' || type === 'reminders' ? reminders : undefined,
+    links: type === 'all' || type === 'links' ? links : undefined,
+    quickFills: type === 'all' || type === 'quickfills' || type === 'quick_fills' ? quickFills : undefined,
   });
 });
 
-app.post('/api/info-hub/reminder', (req, res) => {
+// Sincronização em lote (upsert por id) — o caminho recomendado para apps externos.
+app.post('/api/info-hub/sync', (req, res) => {
   try {
-    const { title, message, priority } = req.body || {};
-    if (!title || !message) {
-      return res.status(400).json({ error: 'Título e mensagem são obrigatórios' });
-    }
-
-    const reminder = {
-      id: `rem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      title: title.trim(),
-      message: message.trim(),
-      priority: priority || 'normal',
-      createdAt: new Date().toISOString(),
+    const ws = getWorkspace(req);
+    const { reminders, links, quickFills } = req.body || {};
+    const upsert = (store: any[], items: any[]) => {
+      let n = 0;
+      (items || []).forEach((it: any) => {
+        if (!it) return;
+        const id = String(it.id || `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+        const idx = store.findIndex((s) => s.id === id);
+        const doc = { ...it, id, workspace: ws, updatedAt: new Date().toISOString() };
+        if (idx >= 0) store[idx] = { ...store[idx], ...doc };
+        else store.unshift(doc);
+        n++;
+      });
+      return n;
     };
-
-    dimensioStore.infoHubReminders.unshift(reminder);
-    broadcastDimensioUpdate('info_hub_reminder', { reminder });
-
-    res.json({ success: true, data: reminder });
+    const c1 = Array.isArray(reminders) ? upsert(dimensioStore.infoHubReminders, reminders) : 0;
+    const c2 = Array.isArray(links) ? upsert(dimensioStore.infoHubLinks, links) : 0;
+    const c3 = Array.isArray(quickFills) ? upsert(dimensioStore.infoHubQuickFills, quickFills) : 0;
+    const meta = touchWorkspace(ws);
+    broadcastDimensioUpdate('info_hub_sync', { workspace: ws, reminders: c1, links: c2, quickFills: c3 });
+    res.json({ success: true, workspace: ws, seq: meta.seq, upserted: { reminders: c1, links: c2, quickFills: c3 } });
   } catch (err: any) {
-    res.status(500).json({ error: 'Erro ao salvar aviso no Hub', message: err?.message });
+    res.status(500).json({ error: 'Erro no sync do Hub', message: err?.message });
   }
+});
+
+function infoHubCrud(kind: 'reminders' | 'links' | 'quickFills') {
+  const storeOf = () =>
+    kind === 'reminders' ? dimensioStore.infoHubReminders : kind === 'links' ? dimensioStore.infoHubLinks : dimensioStore.infoHubQuickFills;
+  return {
+    create(req: express.Request, res: express.Response) {
+      try {
+        const ws = getWorkspace(req);
+        const body = req.body || {};
+        const store = storeOf() as any[];
+        const id = String(body.id || `${kind.slice(0, 3)}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+        const doc = { ...body, id, workspace: ws, createdAt: body.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+        store.unshift(doc);
+        const meta = touchWorkspace(ws);
+        broadcastDimensioUpdate(`info_hub_${kind}_upsert`, { workspace: ws, data: doc });
+        res.json({ success: true, workspace: ws, seq: meta.seq, data: doc });
+      } catch (err: any) {
+        res.status(500).json({ error: `Erro ao criar ${kind}`, message: err?.message });
+      }
+    },
+    update(req: express.Request, res: express.Response) {
+      try {
+        const ws = getWorkspace(req);
+        const store = storeOf() as any[];
+        const idx = store.findIndex((s) => s.id === req.params.id);
+        if (idx === -1) return res.status(404).json({ error: `${kind}: não encontrado` });
+        store[idx] = { ...store[idx], ...req.body, id: req.params.id, workspace: ws, updatedAt: new Date().toISOString() };
+        const meta = touchWorkspace(ws);
+        broadcastDimensioUpdate(`info_hub_${kind}_upsert`, { workspace: ws, data: store[idx] });
+        res.json({ success: true, workspace: ws, seq: meta.seq, data: store[idx] });
+      } catch (err: any) {
+        res.status(500).json({ error: `Erro ao atualizar ${kind}`, message: err?.message });
+      }
+    },
+    remove(req: express.Request, res: express.Response) {
+      const ws = getWorkspace(req);
+      const store = storeOf() as any[];
+      const idx = store.findIndex((s) => s.id === req.params.id);
+      if (idx === -1) return res.status(404).json({ error: `${kind}: não encontrado` });
+      store.splice(idx, 1);
+      const meta = touchWorkspace(ws);
+      broadcastDimensioUpdate(`info_hub_${kind}_deleted`, { workspace: ws, id: req.params.id });
+      res.json({ success: true, workspace: ws, seq: meta.seq, id: req.params.id });
+    },
+  };
+}
+
+const reminderApi = infoHubCrud('reminders');
+const linkApi = infoHubCrud('links');
+const quickFillApi = infoHubCrud('quickFills');
+
+// CRUD granular por recurso (compatível com REST multi-app)
+app.post('/api/info-hub/reminders', reminderApi.create);
+app.put('/api/info-hub/reminders/:id', reminderApi.update);
+app.delete('/api/info-hub/reminders/:id', reminderApi.remove);
+app.post('/api/info-hub/links', linkApi.create);
+app.put('/api/info-hub/links/:id', linkApi.update);
+app.delete('/api/info-hub/links/:id', linkApi.remove);
+app.post('/api/info-hub/quickfills', quickFillApi.create);
+app.put('/api/info-hub/quickfills/:id', quickFillApi.update);
+app.delete('/api/info-hub/quickfills/:id', quickFillApi.remove);
+// Aliases legados (singular)
+app.post('/api/info-hub/reminder', (req, res) => {
+  const body = req.body || {};
+  req.body = { title: body.title, text: body.message || body.text, message: body.message || body.text, shift: body.shift || 'Todos', priority: body.priority || 'normal', authorName: body.authorName };
+  return reminderApi.create(req, res);
 });
 
 app.post('/api/notifications/broadcast', (req, res) => {
@@ -1410,7 +1592,31 @@ app.get('/api/openapi.json', (_req, res) => {
         post: { summary: 'Registrar leitura de métrica via extensão' },
       },
       '/api/info-hub': {
-        get: { summary: 'Consultar mural de avisos e links rápidos' },
+        get: { summary: 'Consultar base compartilhada (avisos, links, quick-fills) por workspace (?workspace=&type=&search=&shift=)' },
+      },
+      '/api/info-hub/sync': {
+        post: { summary: 'Sync em lote da base compartilhada (upsert de reminders/links/quickFills por workspace)' },
+      },
+      '/api/info-hub/reminders': {
+        post: { summary: 'Criar aviso na base compartilhada' },
+      },
+      '/api/info-hub/reminders/{id}': {
+        put: { summary: 'Atualizar aviso' },
+        delete: { summary: 'Remover aviso' },
+      },
+      '/api/info-hub/links': {
+        post: { summary: 'Criar atalho/link na base compartilhada' },
+      },
+      '/api/info-hub/links/{id}': {
+        put: { summary: 'Atualizar atalho/link' },
+        delete: { summary: 'Remover atalho/link' },
+      },
+      '/api/info-hub/quickfills': {
+        post: { summary: 'Criar grupo de códigos na base compartilhada' },
+      },
+      '/api/info-hub/quickfills/{id}': {
+        put: { summary: 'Atualizar grupo de códigos' },
+        delete: { summary: 'Remover grupo de códigos' },
       },
       '/api/notifications/broadcast': {
         post: { summary: 'Transmitir notificação em tempo real' },
@@ -1466,6 +1672,11 @@ app.get('/api/presence/events', (_req, res) => {
 
 // GET /api/signal - Poll pending signals for client
 app.get('/api/signal', (req, res) => {
+  if (!checkSignalRate(req)) {
+    res.setHeader('Retry-After', '1');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(429).json({ error: 'Polling muito frequente. Use intervalo >= 2.5s.', maxSeq: globalSignalSeq, messages: [] });
+  }
   cleanupSignals();
   const sinceSeq = parseInt((req.query.sinceSeq as string) || '0', 10);
   const sinceTs = parseInt((req.query.since as string) || '0', 10);
@@ -1485,8 +1696,12 @@ app.get('/api/signal', (req, res) => {
     newMsgs = signalStore.filter((m) => m.ts >= now - 30000);
   }
 
+  // Teto por resposta: evita que um cliente dessincronizado baixe centenas de msgs
+  if (newMsgs.length > 100) newMsgs = newMsgs.slice(-100);
+
   const maxSeq = signalStore.length > 0 ? signalStore[signalStore.length - 1].seq : globalSignalSeq;
 
+  res.setHeader('Cache-Control', 'no-store');
   // Return both array structure (for legacy compatibility) and metadata
   res.json({
     messages: newMsgs,

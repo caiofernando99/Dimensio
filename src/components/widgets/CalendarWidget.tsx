@@ -14,7 +14,7 @@ export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ onOpenFull, clas
   const selectedDate = state.selectedDate;
 
   // Compute scale groups on duty vs on off today
-  const groups = state.scaleGroups || ['A', 'B', 'C', 'D'];
+  const groups = state.scaleGroups || [];
   const offGroups = groups.filter((g) => isScaleOff(state.calendar, selectedDate, g));
   const workingGroups = groups.filter((g) => !offGroups.includes(g));
 

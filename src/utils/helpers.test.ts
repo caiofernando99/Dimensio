@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { formatPersonName, abbreviateName, getTodayISO, formatDateBR, formatDateLongBR, isScaleOff, generateId, escapeSearchTerm, matchesSearch, matchesCollaboratorSearch, isSampleDataState, shuffleArray } from '../utils/helpers';
+import { formatPersonName, abbreviateName, getTodayISO, formatDateBR, formatDateLongBR, isScaleOff, generateId, escapeSearchTerm, matchesSearch, matchesCollaboratorSearch, scoreCollaboratorSearch, sortBySearchScore, isSampleDataState, shuffleArray } from '../utils/helpers';
 
 describe('helpers', () => {
   describe('formatPersonName', () => {
@@ -203,6 +203,45 @@ describe('helpers', () => {
       expect(isSampleDataState({ collaborators: pristine, isSampleData: true })).toBe(false);
       expect(isSampleDataState({ collaborators: pristine, isSampleData: false })).toBe(false);
       expect(isSampleDataState([])).toBe(false);
+    });
+  });
+
+  describe('scoreCollaboratorSearch (caso Matheus)', () => {
+    const base = {
+      id: 'x',
+      role: 'Operador',
+      shift: 'T2',
+      teamLeader: 'Time 01',
+      registration: '',
+      login: '',
+      category: 'Geral',
+      scale: 'A',
+    } as any;
+    const matheus = { ...base, id: 'm1', name: 'Matheus Campos' };
+    const liderado = { ...base, id: 'c9', name: 'Ana Souza', teamLeader: 'Matheus Campos' };
+
+    it('dá nota máxima para o nome próprio e menor para o time', () => {
+      expect(scoreCollaboratorSearch(matheus, 'matheus')).toBe(100);
+      expect(scoreCollaboratorSearch(liderado, 'matheus')).toBe(30);
+    });
+
+    it('casa variação fonética Mateus <-> Matheus no nome', () => {
+      expect(scoreCollaboratorSearch({ ...base, name: 'Mateus Silva' }, 'matheus')).toBeGreaterThanOrEqual(80);
+      expect(scoreCollaboratorSearch(matheus, 'mateus')).toBe(80);
+    });
+
+    it('retorna 0 para quem não casa e para busca vazia', () => {
+      expect(scoreCollaboratorSearch({ ...base, name: 'João Pedro' }, 'matheus')).toBe(0);
+      expect(scoreCollaboratorSearch(matheus, '')).toBe(0);
+      expect(scoreCollaboratorSearch(null, 'matheus')).toBe(0);
+    });
+
+    it('ordena correspondência direta antes do contexto (time/líder)', () => {
+      const list = [liderado, { ...base, id: 'c8', name: 'Rui Costa', teamLeader: 'Matheus Campos' }, matheus];
+      const ordered = sortBySearchScore(list, 'matheus');
+      expect(ordered[0].id).toBe('m1');
+      // empate de contexto mantém a ordem original (estável)
+      expect(ordered.slice(1).map((c) => c.id)).toEqual(['c9', 'c8']);
     });
   });
 

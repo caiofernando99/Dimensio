@@ -1,5 +1,4 @@
 import { AppState, Collaborator, ScheduledAbsence, BreakRotationInfo } from '../types';
-import { SUGGESTED_CALENDAR_2026 } from './suggestedScale';
 
 export function generateId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -174,11 +173,72 @@ export function isOperationalRole(roleName: string, state: AppState): boolean {
 }
 
 /**
- * Checks if a collaborator is on scale off (Folga) for a given date.
+ * Normaliza qualquer formato de dia do calendário (legado string, array ou
+ * objeto CalendarDay) para CalendarDay canônico.
  */
-export function isScaleOff(calendar: Record<string, string>, dateStr: string, scale: string): boolean {
+export function normalizeCalendarDay(raw: unknown): import('../types').CalendarDay {
+  if (!raw) return { offGroups: [] };
+  if (typeof raw === 'string') {
+    return raw ? { offGroups: [raw] } : { offGroups: [] };
+  }
+  if (Array.isArray(raw)) {
+    return { offGroups: (raw as unknown[]).map(String).filter(Boolean) };
+  }
+  if (typeof raw === 'object') {
+    const o = raw as Partial<import('../types').CalendarDay> & { group?: unknown; offGroup?: unknown };
+    const fromOff = Array.isArray((o as any).offGroups)
+      ? (o as any).offGroups.map(String).filter(Boolean)
+      : [];
+    const legacySingle = typeof o.group === 'string' && o.group
+      ? [o.group]
+      : typeof o.offGroup === 'string' && (o as any).offGroup
+        ? [(o as any).offGroup as string]
+        : [];
+    return {
+      offGroups: [...fromOff, ...legacySingle],
+      holidayTitle: typeof o.holidayTitle === 'string' ? o.holidayTitle : undefined,
+      isHoliday: Boolean(o.isHoliday || (typeof o.holidayTitle === 'string' && o.holidayTitle.trim())),
+      allowWorkOnHoliday: o.allowWorkOnHoliday !== false,
+      notes: typeof o.notes === 'string' ? o.notes : undefined,
+    };
+  }
+  return { offGroups: [] };
+}
+
+/** Retorna as turmas em folga num dia (suporta 0..N turmas). */
+export function getDayOffGroups(
+  calendar: Record<string, string | string[] | import('../types').CalendarDay>,
+  dateStr: string
+): string[] {
+  return normalizeCalendarDay((calendar || {})[dateStr]).offGroups;
+}
+
+/** Retorna info de feriado do dia, se houver (título + permissão de trabalho). */
+export function getDayHoliday(
+  calendar: Record<string, string | string[] | import('../types').CalendarDay>,
+  dateStr: string
+): { title?: string; isHoliday: boolean; allowWork: boolean } {
+  const day = normalizeCalendarDay((calendar || {})[dateStr]);
+  return {
+    title: day.holidayTitle,
+    isHoliday: Boolean(day.isHoliday),
+    allowWork: day.allowWorkOnHoliday !== false,
+  };
+}
+
+/**
+ * Checks if a collaborator is on scale off (Folga) for a given date.
+ * Suporta multi-folga: retorna true se a escala do colaborador estiver
+ * entre as turmas em folga do dia. Feriado com allowWork NÃO altera a folga —
+ * apenas carrega a informação para exibição.
+ */
+export function isScaleOff(
+  calendar: Record<string, string | string[] | import('../types').CalendarDay>,
+  dateStr: string,
+  scale: string
+): boolean {
   if (!scale) return false;
-  return calendar[dateStr] === scale;
+  return getDayOffGroups(calendar, dateStr).includes(scale);
 }
 
 /**
@@ -202,36 +262,6 @@ export function isSampleDataState(
   _state: Pick<AppState, 'collaborators' | 'isSampleData'> | Collaborator[]
 ): boolean {
   return false;
-}
-
-/**
- * Applies the official 6x2 suggested scale to the app calendar.
- * Returns a new calendar object (does not mutate).
- */
-export function applySuggestedScale6x2(year: number, groups: string[] = ['A', 'B', 'C', 'D']): Record<string, string> {
-  const groupNames = groups.length > 0 ? groups : ['A', 'B', 'C', 'D'];
-  const start = new Date(year, 0, 1);
-  const end = new Date(year, 11, 31);
-  const calendar: Record<string, string> = {};
-
-  const normalize = (d: Date): string => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  };
-
-  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const iso = normalize(d);
-    if (SUGGESTED_CALENDAR_2026[iso]) {
-      calendar[iso] = SUGGESTED_CALENDAR_2026[iso];
-    } else {
-      const dayOfYear = Math.floor((d.getTime() - start.getTime()) / 86400000);
-      calendar[iso] = groupNames[Math.floor(dayOfYear / 2) % groupNames.length];
-    }
-  }
-
-  return calendar;
 }
 
 /**
@@ -504,8 +534,8 @@ export function canonicalizeNameForSearch(name: string): string {
  * Accepts multi-word queries (tokens), exact substrings, phonetic name variants (e.g. Matheus <-> Mateus),
  * and pasted lists separated by newlines or commas/semicolons.
  */
-export function matchesSearch(text: string | undefined | null, search: string): boolean {
-  if (!search || !search.trim()) return true;
+export function matchesSearch(text: string | undefined | null, search: unknown): boolean {
+  if (typeof search !== 'string' || !search.trim()) return true;
   if (!text) return false;
 
   // Split search into terms if user pasted multiple lines or comma/semicolon separated list
@@ -631,6 +661,83 @@ export function matchesCollaboratorSearch(
 
     return false;
   });
+}
+
+/**
+ * Relevância de um colaborador para a busca (0 = não casa).
+ *
+ * Por que existe: o matcher acima casa o nome no time/líder com o MESMO peso
+ * do nome próprio — buscar "matheus" retornava 69 de 72 (66 liderados por um
+ * Matheus) e os 3 Matheus reais se afogavam no fim da lista. Com o score, as
+ * UIs ordenam correspondência direta primeiro.
+ *
+ * Tiers: 100 nome (substring) > 90 prefixo de palavra do nome > 80 nome
+ * fonético (Matheus↔Mateus) > 70 login/matrícula > 50 cargo > 40 turno >
+ * 30 time/líder > 20 categoria/skills > 10 resto do pacote.
+ */
+export function scoreCollaboratorSearch(
+  collaborator: Collaborator | undefined | null,
+  query: string | undefined | null,
+  extra?: { defaultTeamLeader?: string }
+): number {
+  if (!collaborator) return 0;
+  if (!query || !query.trim()) return 0;
+  const cleanQuery = query.replace(/^\./, '').trim();
+  if (!cleanQuery) return 0;
+
+  const normQ = normalizeSearchText(cleanQuery);
+  const canonQ = canonicalizeNameForSearch(cleanQuery);
+  const tokens = normQ.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return 0;
+
+  const colName = collaborator.name || '';
+  const normName = normalizeSearchText(colName);
+  const canonName = canonicalizeNameForSearch(colName);
+  const nameWords = normName.split(/\s+/).filter(Boolean);
+
+  const startsWithWords = tokens.every((t) => nameWords.some((w) => w.startsWith(t)));
+  if (normName && normQ && normName.includes(normQ)) return 100;
+  if (startsWithWords) return 90;
+  if (canonName && canonQ && canonName.includes(canonQ)) return 80;
+
+  const login = normalizeSearchText(collaborator.login || '');
+  const reg = normalizeSearchText(collaborator.registration || '');
+  if ((login && normQ && login.includes(normQ)) || (reg && normQ && reg.includes(normQ))) return 70;
+
+  const roleText = normalizeSearchText(collaborator.role || '');
+  if (roleText && tokens.every((t) => roleText.includes(t))) return 50;
+
+  const shiftText = normalizeSearchText(collaborator.shift || '');
+  if (shiftText && tokens.every((t) => shiftText.includes(t))) return 40;
+
+  const tlText = normalizeSearchText(collaborator.teamLeader || extra?.defaultTeamLeader || '');
+  if (tlText && tokens.every((t) => tlText.includes(t))) return 30;
+
+  const catSkills = normalizeSearchText(
+    `${collaborator.category || ''} ${
+      Array.isArray(collaborator.skills)
+        ? collaborator.skills.join(' ')
+        : typeof collaborator.skills === 'object' && collaborator.skills !== null
+        ? Object.keys(collaborator.skills).join(' ')
+        : ''
+    }`
+  );
+  if (catSkills.trim() && tokens.every((t) => catSkills.includes(t))) return 20;
+
+  return matchesCollaboratorSearch(collaborator, query, extra) ? 10 : 0;
+}
+
+/** Ordena perfis por relevância (maior score primeiro, estável). */
+export function sortBySearchScore<T extends Collaborator>(
+  items: T[],
+  query: string | undefined | null,
+  extra?: { defaultTeamLeader?: string }
+): T[] {
+  if (!query || !query.trim()) return items;
+  return items
+    .map((item, idx) => ({ item, idx, score: scoreCollaboratorSearch(item, query, extra) }))
+    .sort((a, b) => b.score - a.score || a.idx - b.idx)
+    .map((e) => e.item);
 }
 
 /**

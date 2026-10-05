@@ -518,7 +518,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
             value={statusCounts.folga}
             icon={CalendarDays}
             tone="default"
-            hint="Escala 6x2"
+            hint="Pela escala"
           />
           <StatCard
             label="Dimensionados"

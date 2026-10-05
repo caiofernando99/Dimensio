@@ -377,10 +377,11 @@ export const PresenceApiModal: React.FC<PresenceApiModalProps> = ({
                       className="w-full bg-[var(--paper)] border border-[var(--line)] rounded-xl px-3 py-1.5 font-bold text-[var(--ink)]"
                     >
                       <option value="ALL">Todas as Turmas</option>
-                      <option value="A">Turma A</option>
-                      <option value="B">Turma B</option>
-                      <option value="C">Turma C</option>
-                      <option value="D">Turma D</option>
+                      {(state.scaleGroups || []).map((g) => (
+                        <option key={g} value={g}>
+                          Turma {g}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -458,7 +459,7 @@ export const PresenceApiModal: React.FC<PresenceApiModalProps> = ({
                         <div className="min-w-0">
                           <div className="font-extrabold text-xs text-[var(--ink)] truncate">{c.name}</div>
                           <div className="text-[10px] font-semibold text-[var(--muted)]">
-                            {c.login || 'Sem LDAP'} • {c.shift || 'Geral'} • Turma {c.scale || 'A'}
+                            {c.login || 'Sem LDAP'} • {c.shift || 'Geral'} • Turma {c.scale || '—'}
                           </div>
                         </div>
                         <span

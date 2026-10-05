@@ -1087,10 +1087,11 @@ export const IntegrationsSettingsPanel: React.FC<IntegrationsSettingsPanelProps>
                     className="w-full bg-[var(--paper)] border border-[var(--line)] rounded-xl px-3 py-1.5 font-bold text-[var(--ink)] text-xs"
                   >
                     <option value="ALL">Todas as Turmas</option>
-                    <option value="A">Turma A</option>
-                    <option value="B">Turma B</option>
-                    <option value="C">Turma C</option>
-                    <option value="D">Turma D</option>
+                    {(state.scaleGroups || []).map((g) => (
+                      <option key={g} value={g}>
+                        Turma {g}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>

@@ -63,8 +63,10 @@ import {
 } from '../utils/taskTreeHelpers';
 import { calculateCollabTaskScore } from '../utils/autoAssignEngine';
 import { Task, Collaborator, AutoAssignOptions } from '../types';
+import { useI18n } from '../i18n';
 
 export const AssignmentView: React.FC = () => {
+  const { t } = useI18n();
   const {
     state,
     assignTask,
@@ -1110,9 +1112,9 @@ export const AssignmentView: React.FC = () => {
     <div className="space-y-5 pb-8">
       <PageHeader
         icon={FolderTree}
-        title="Dimensionamento Operacional"
-        subtitle="Atribua colaboradores em atividades principais e subdivisões com suporte hierárquico consolidado."
-        meta={<Badge tone="neutral">{taskGroups.length} Atividades Principais</Badge>}
+        title={t('assignment.title')}
+        subtitle={t('assignment.subtitle')}
+        meta={<Badge tone="neutral">{taskGroups.length} {t('assignment.totalStations')}</Badge>}
         actions={
           <>
             <Button
@@ -1121,15 +1123,15 @@ export const AssignmentView: React.FC = () => {
               icon={Undo2}
               onClick={undo}
               disabled={!canUndo}
-              title="Desfazer última alteração (Ctrl+Z)"
+              title="Ctrl+Z"
             >
-              Desfazer (Ctrl+Z)
+              {t('common.reset')} (Ctrl+Z)
             </Button>
 
             <Tabs
               items={[
-                { value: 'tree', label: 'Visão Hierárquica', icon: ListTree },
-                { value: 'list', label: 'Lista', icon: List },
+                { value: 'tree', label: t('assignment.viewModeTree'), icon: ListTree },
+                { value: 'list', label: t('assignment.viewModeFlat'), icon: List },
               ]}
               value={viewMode}
               onChange={(v) => setViewMode(v as 'tree' | 'list')}
@@ -1140,9 +1142,8 @@ export const AssignmentView: React.FC = () => {
               size="sm"
               icon={showSubtasks ? GitFork : Layers}
               onClick={() => setShowSubtasks(!showSubtasks)}
-              title={showSubtasks ? 'Ocultar subdivisões (visão gerencial consolidada)' : 'Exibir subdivisões (visão detalhada por subtarefa)'}
             >
-              {showSubtasks ? 'Ocultar Subtarefas' : 'Exibir Subtarefas'}
+              {showSubtasks ? t('common.close') : t('common.view')} {t('routines.subtasks')}
             </Button>
 
             <Button
@@ -1172,34 +1173,35 @@ export const AssignmentView: React.FC = () => {
                 });
                 showNotice(
                   countRemoved > 0
-                    ? `${countRemoved} colaborador(es) ausente(s) ou fora do filtro foram removido(s) das tarefas.`
+                    ? `${countRemoved} colaboradores removidos.`
                     : 'Nenhum colaborador ausente estava alocado.'
                 );
               }}
-              title="Limpa colaboradores ausentes ou de outros turnos/times das tarefas"
             >
-              Limpar Ausentes
+              {t('presence.absentTab')}
             </Button>
 
             <Button
               variant="outline"
               size="sm"
               onClick={() => {
-                clearAssignments();
-                showNotice('Dimensionamento limpo.');
+                if (window.confirm(t('assignment.clearConfirm'))) {
+                  clearAssignments();
+                  showNotice(t('assignment.clearAll'));
+                }
               }}
             >
-              Limpar Tudo
+              {t('assignment.clearAll')}
             </Button>
 
             <Button
               variant="primary"
               size="sm"
               onClick={() => setAutoAssignModalOpen(true)}
-              title="Configurar estratégias e executar dimensionamento inteligente balanceado"
+              title={t('assignment.autoAssignHint')}
             >
               <Shuffle className={`w-3.5 h-3.5 ${isAutoAssigning ? 'animate-spin' : ''}`} />
-              <span>Auto Dimensionar</span>
+              <span>{t('assignment.autoAssign')}</span>
               <Sliders className="w-3 h-3 ml-0.5 opacity-80" />
             </Button>
           </>
@@ -1210,8 +1212,8 @@ export const AssignmentView: React.FC = () => {
       <Card>
         <CardHeader
           icon={<Users className="w-4.5 h-4.5" />}
-          title="Filtros e Busca"
-          subtitle="Filtre por turno, time, cargo, categoria e habilidades para refinar o dimensionamento."
+          title={t('presence.filtersTitle')}
+          subtitle={t('presence.filtersSubtitle')}
           actions={
             (searchTerm || taskSearchTerm || selectedShifts.length > 0 || selectedTLs.length > 0 || selectedRoles.length > 0 || selectedCategories.length > 0 || selectedSkills.length > 0) ? (
               <Button
@@ -1229,7 +1231,7 @@ export const AssignmentView: React.FC = () => {
                   setSelectedGlobalFilters({ shift: 'ALL', teamLeader: 'ALL' });
                 }}
               >
-                Limpar Filtros
+                {t('presence.clearFilters')}
               </Button>
             ) : undefined
           }
@@ -1238,41 +1240,41 @@ export const AssignmentView: React.FC = () => {
         <div className="mt-3.5 space-y-3">
           <Toolbar>
             <MultiSelectFilter
-              label="Turno"
+              label={t('team.shiftCol')}
               options={shiftOptions}
               selectedValues={selectedShifts}
               onChange={setSelectedShifts}
-              placeholder="Todos os turnos"
-              allLabel="Todos os Turnos"
+              placeholder={t('presence.allTeams')}
+              allLabel={t('presence.allTeams')}
             />
 
             <MultiSelectFilter
-              label="Time / TL"
+              label={t('presence.teamLeaderLabel')}
               options={tlOptions}
               selectedValues={selectedTLs}
               onChange={setSelectedTLs}
-              placeholder="Todos os times"
-              allLabel="Todos os Times"
+              placeholder={t('presence.allTeams')}
+              allLabel={t('presence.allTeams')}
               icon={<Users className="w-3 h-3 text-[var(--primary)]" />}
             />
 
             <MultiSelectFilter
-              label="Cargo"
+              label={t('presence.roleLabel')}
               options={roleOptions}
               selectedValues={selectedRoles}
               onChange={setSelectedRoles}
-              placeholder="Todos os cargos"
-              allLabel="Todos os Cargos"
+              placeholder={t('presence.allRoles')}
+              allLabel={t('presence.allRoles')}
               icon={<Briefcase className="w-3 h-3 text-[var(--primary)]" />}
             />
 
             <MultiSelectFilter
-              label="Categoria"
+              label={t('presence.categoryLabel')}
               options={categoryOptions}
               selectedValues={selectedCategories}
               onChange={setSelectedCategories}
-              placeholder="Todas as categorias"
-              allLabel="Todas as Categorias"
+              placeholder={t('presence.allCategories')}
+              allLabel={t('presence.allCategories')}
               icon={<Tag className="w-3 h-3 text-[var(--primary)]" />}
             />
 
@@ -1281,8 +1283,8 @@ export const AssignmentView: React.FC = () => {
               options={skillOptions}
               selectedValues={selectedSkills}
               onChange={setSelectedSkills}
-              placeholder="Todas as skills"
-              allLabel="Todas as Skills"
+              placeholder="Skills"
+              allLabel="Skills"
               icon={<Sparkles className="w-3 h-3 text-purple-500" />}
             />
 
@@ -1290,7 +1292,7 @@ export const AssignmentView: React.FC = () => {
               <SearchInput
                 value={searchTerm}
                 onChange={setSearchTerm}
-                placeholder="Buscar colaborador..."
+                placeholder={t('presence.searchPlaceholder')}
                 className="w-full"
               />
             </div>

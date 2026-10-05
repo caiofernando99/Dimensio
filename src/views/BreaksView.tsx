@@ -54,8 +54,10 @@ import {
   TaskTreeNode,
 } from '../utils/taskTreeHelpers';
 import { Task, Collaborator } from '../types';
+import { useI18n } from '../i18n';
 
 export const BreaksView: React.FC = () => {
+  const { t } = useI18n();
   const {
     state,
     moveBreakInterval,
@@ -695,20 +697,20 @@ export const BreaksView: React.FC = () => {
     <div className="space-y-5 animate-in fade-in duration-200">
       <PageHeader
         icon={Clock}
-        title="Gestão e Balanceamento de Intervalos"
-        subtitle={`Escala de Intervalos • ${
+        title={t('breaks.title')}
+        subtitle={`${t('breaks.subtitle')} • ${
           selectedShifts.length === 1
             ? `Turno ${selectedShifts[0]}`
             : selectedShifts.length > 1
             ? `${selectedShifts.length} Turnos`
-            : 'Todos os Turnos'
+            : t('common.all')
         }`}
         actions={
           <>
             <Tabs
               items={[
-                { value: 'grid', label: 'Visão Geral (Grid)' },
-                { value: 'list', label: 'Lista', icon: List },
+                { value: 'grid', label: 'Grid' },
+                { value: 'list', label: t('assignment.viewModeFlat'), icon: List },
               ]}
               value={allocationMode}
               onChange={(v) => setAllocationMode(v as 'grid' | 'list')}
@@ -719,9 +721,9 @@ export const BreaksView: React.FC = () => {
               icon={Undo2}
               onClick={() => undo()}
               disabled={!canUndo}
-              title="Desfazer última alteração (Ctrl+Z)"
+              title="Ctrl+Z"
             >
-              Desfazer
+              {t('common.reset')}
             </Button>
             <Button
               variant="secondary"
@@ -731,9 +733,9 @@ export const BreaksView: React.FC = () => {
               onClick={() => {
                 generateRotatingBreaks();
               }}
-              title="Aplica a rotação diária de intervalos (+1 slot em relação ao dia anterior)"
+              title="Rotação (+1)"
             >
-              Rotação Diária (+1)
+              Rotação (+1)
             </Button>
             <Button
               variant="primary"
@@ -744,18 +746,11 @@ export const BreaksView: React.FC = () => {
                   generateRotatingBreaks();
                 } else {
                   generateBreaks(balancingMode);
-                  showNotice(
-                    `Intervalos gerados com distribuição aleatória e balanceamento (${balancingMode === 'parent' ? 'Modo Tarefa Pai' : 'Modo por Subtarefas'})!`
-                  );
+                  showNotice(t('breaks.autoDistribute'));
                 }
               }}
-              title={
-                balancingMode === 'rotation'
-                  ? 'Aplica rotação cíclica (+1 slot em relação ao dia anterior)'
-                  : 'Gera e distribui os colaboradores entre os horários, mantendo o balanceamento rigoroso por posto'
-              }
             >
-              {balancingMode === 'rotation' ? 'Executar Rotação' : 'Gerar / Balancear'}
+              {t('breaks.autoDistribute')}
             </Button>
           </>
         }

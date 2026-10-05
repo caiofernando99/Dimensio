@@ -306,7 +306,7 @@ const MainLayout: React.FC = () => {
       case 'home':
         return 'Visão Geral da Operação';
       case 'calendar':
-        return 'Calendário Anual da Escala 6x2';
+        return 'Calendário & Escalas';
       case 'team':
         return 'Equipe & Cadastros';
       case 'presence':
@@ -320,7 +320,7 @@ const MainLayout: React.FC = () => {
       case 'requests':
         return 'Pedidos de Serviço Operacionais';
       case 'briefing':
-        return 'Montagem de Slide';
+        return 'Montador de Slides';
       case 'employee':
         return 'Meu Painel do Colaborador';
       case 'routines':

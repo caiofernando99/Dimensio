@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
-import { ShieldAlert, Download, Layers, Users, CheckCircle2, RotateCcw, X, ArrowRight, ShieldCheck } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { ShieldAlert, Layers, RotateCcw, X, ShieldCheck, AlertTriangle, CalendarDays } from 'lucide-react';
 import { AppState } from '../types';
+import { normalizeAppState } from '../utils/stateNormalizer';
+import { classifyBackupFile } from '../utils/backupImport';
 
 interface ConfirmImportBackupModalProps {
   isOpen: boolean;
@@ -22,13 +24,60 @@ export const ConfirmImportBackupModal: React.FC<ConfirmImportBackupModalProps> =
   const [mode, setMode] = useState<'config_only' | 'full'>('config_only');
   const [createBackup, setCreateBackup] = useState(true);
 
+  // Prévia REAL: normaliza o arquivo (desembrulha snapshots, aplica defaults)
+  // em vez de ler o JSON cru — contagens erradas aqui já causaram restaurações vazias.
+  const preview = useMemo(() => {
+    if (!importedData) return null;
+    try {
+      return normalizeAppState(importedData);
+    } catch {
+      return null;
+    }
+  }, [importedData]);
+
+  const fileKind = useMemo(
+    () => (importedData ? classifyBackupFile(importedData).kind : 'unknown'),
+    [importedData]
+  );
+
+  const isCalendarFile = fileKind === 'calendar';
+
+  // Modo sugerido: arquivo com equipe → restauração total; sem equipe → só estrutura.
+  // Reseta a cada arquivo novo (o modal permanece montado entre aberturas).
+  useEffect(() => {
+    if (!preview) return;
+    setMode(preview.collaborators.length > 0 ? 'full' : 'config_only');
+    setCreateBackup(true);
+  }, [preview, isOpen]);
+
   if (!isOpen || !importedData) return null;
 
-  const fileColsCount = importedData.collaborators?.length || 0;
-  const fileTasksCount = importedData.tasks?.length || 0;
-  const fileTeamName = importedData.teamName || 'Equipe Não Identificada';
+  const fileColsCount = preview?.collaborators.length || 0;
+  const fileTasksCount = preview?.tasks.length || 0;
+  const fileRoutinesCount = preview?.scheduledTasks?.length || 0;
+  const fileRequestsCount = preview?.serviceRequests?.length || 0;
+  const fileHubCount =
+    (preview?.infoHubReminders?.length || 0) +
+    (preview?.infoHubLinks?.length || 0) +
+    (preview?.infoHubQuickFills?.length || 0);
+  const fileCalendarDays = preview ? Object.keys(preview.calendar || {}).length : 0;
+  const fileTeamName = preview?.teamName || 'Equipe Não Identificada';
+
+  const destructiveFull =
+    mode === 'full' && fileColsCount === 0 && currentCollaboratorCount > 0;
+  const partialScopeWarning =
+    mode === 'config_only' &&
+    (fileRoutinesCount > 0 || fileRequestsCount > 0 || fileHubCount > 0);
 
   const handleConfirm = () => {
+    if (
+      destructiveFull &&
+      !window.confirm(
+        `ATENÇÃO: este arquivo NÃO contém colaboradores e você tem ${currentCollaboratorCount} no sistema. A substituição total vai APAGAR sua equipe atual. Deseja mesmo continuar?`
+      )
+    ) {
+      return;
+    }
     onConfirmImport(mode, createBackup);
     onClose();
   };
@@ -79,63 +128,101 @@ export const ConfirmImportBackupModal: React.FC<ConfirmImportBackupModalProps> =
               </span>
               <div className="font-extrabold text-sm text-[var(--ink)] truncate">{fileTeamName}</div>
               <div className="text-[11px] font-bold text-[var(--primary)]">
-                {fileColsCount} colaboradores e {fileTasksCount} tarefas
+                {fileColsCount} colaboradores • {fileTasksCount} tarefas • {fileRoutinesCount} rotinas •{' '}
+                {fileRequestsCount} pedidos • {fileHubCount} itens no hub • {fileCalendarDays} dias de escala
               </div>
             </div>
           </div>
 
-          {/* Import Modes Choice */}
-          <div className="space-y-2">
-            <label className="text-[11px] font-extrabold text-[var(--ink)] uppercase tracking-wider block">
-              Como deseja aplicar estes dados?
-            </label>
-
-            {/* Option 1: Config only */}
-            <div
-              onClick={() => setMode('config_only')}
-              className={`p-4 rounded-xl border-2 transition-all cursor-pointer space-y-1.5 ${
-                mode === 'config_only'
-                  ? 'border-emerald-600 bg-emerald-500/10 dark:bg-emerald-950/30'
-                  : 'border-[var(--line)] bg-[var(--bg)] hover:border-[var(--muted)]'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-black text-sm text-[var(--ink)]">
-                  <Layers className="w-4 h-4 text-emerald-600" />
-                  <span>1. Importar Apenas Configurações & Estrutura</span>
-                </div>
-                <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black rounded-full uppercase">
-                  Recomendado / Seguro
-                </span>
+          {isCalendarFile ? (
+            <div className="p-4 rounded-xl border-2 border-sky-500/50 bg-sky-500/10 flex items-start gap-2.5">
+              <CalendarDays className="w-5 h-5 text-sky-600 shrink-0 mt-0.5" />
+              <div className="text-[11px] leading-relaxed">
+                <strong>Este arquivo é uma exportação de escala/calendário</strong> (não um backup completo). Ao confirmar,{' '}
+                <strong>apenas o calendário será mesclado</strong> — colaboradores, tarefas, rotinas, pedidos e hub{' '}
+                <strong>não serão tocados</strong>.
               </div>
-              <p className="text-[11px] text-[var(--muted)] leading-relaxed pl-6">
-                <strong>Mantém sua equipe atual, registros do dia e relatórios.</strong> Atualiza apenas regras do setor, cargos, tarefas, horários de intervalo, temas e links de planilha.
-              </p>
             </div>
+          ) : (
+            <>
+              {/* Import Modes Choice */}
+              <div className="space-y-2">
+                <label className="text-[11px] font-extrabold text-[var(--ink)] uppercase tracking-wider block">
+                  Como deseja aplicar estes dados?
+                </label>
 
-            {/* Option 2: Full replacement */}
-            <div
-              onClick={() => setMode('full')}
-              className={`p-4 rounded-xl border-2 transition-all cursor-pointer space-y-1.5 ${
-                mode === 'full'
-                  ? 'border-red-600 bg-red-500/10 dark:bg-red-950/30'
-                  : 'border-[var(--line)] bg-[var(--bg)] hover:border-[var(--muted)]'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-black text-sm text-[var(--ink)]">
-                  <RotateCcw className="w-4 h-4 text-red-600" />
-                  <span>2. Substituição Completa (Restaurar Backup Total)</span>
+                {/* Option 1: Config only */}
+                <div
+                  onClick={() => setMode('config_only')}
+                  className={`p-4 rounded-xl border-2 transition-all cursor-pointer space-y-1.5 ${
+                    mode === 'config_only'
+                      ? 'border-emerald-600 bg-emerald-500/10 dark:bg-emerald-950/30'
+                      : 'border-[var(--line)] bg-[var(--bg)] hover:border-[var(--muted)]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-black text-sm text-[var(--ink)]">
+                      <Layers className="w-4 h-4 text-emerald-600" />
+                      <span>1. Importar Apenas Configurações & Estrutura</span>
+                    </div>
+                    <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black rounded-full uppercase">
+                      Seguro
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)] leading-relaxed pl-6">
+                    <strong>Mantém sua equipe atual, registros do dia e relatórios.</strong> Atualiza apenas regras do setor,
+                    cargos, tarefas, horários de intervalo, temas e links de planilha. Rotinas, pedidos e hub{' '}
+                    <strong>não</strong> são importados neste modo.
+                  </p>
                 </div>
-                <span className="px-2 py-0.5 bg-red-600 text-white text-[9px] font-black rounded-full uppercase">
-                  Substitui Tudo
-                </span>
+
+                {/* Option 2: Full replacement */}
+                <div
+                  onClick={() => setMode('full')}
+                  className={`p-4 rounded-xl border-2 transition-all cursor-pointer space-y-1.5 ${
+                    mode === 'full'
+                      ? 'border-red-600 bg-red-500/10 dark:bg-red-950/30'
+                      : 'border-[var(--line)] bg-[var(--bg)] hover:border-[var(--muted)]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-black text-sm text-[var(--ink)]">
+                      <RotateCcw className="w-4 h-4 text-red-600" />
+                      <span>2. Substituição Completa (Restaurar Backup Total)</span>
+                    </div>
+                    <span className="px-2 py-0.5 bg-red-600 text-white text-[9px] font-black rounded-full uppercase">
+                      Substitui Tudo
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)] leading-relaxed pl-6">
+                    Substitui completamente equipe, tarefas, rotinas, pedidos, hub e calendário pelos dados do arquivo.
+                  </p>
+                </div>
               </div>
-              <p className="text-[11px] text-[var(--muted)] leading-relaxed pl-6">
-                Substitui completamente a lista de colaboradores e dados de presença atual pelos colaboradores do arquivo importado.
-              </p>
-            </div>
-          </div>
+
+              {partialScopeWarning && (
+                <div className="p-3.5 rounded-xl border-2 border-amber-500/50 bg-amber-500/10 flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] leading-relaxed">
+                    <strong>Atenção:</strong> o arquivo contém {fileRoutinesCount} rotina(s), {fileRequestsCount}{' '}
+                    pedido(s) e {fileHubCount} item(ns) no hub, mas o modo <strong>estrutura</strong> não os importa. Para
+                    trazê-los, escolha a <strong>Substituição Completa</strong>.
+                  </p>
+                </div>
+              )}
+
+              {destructiveFull && (
+                <div className="p-3.5 rounded-xl border-2 border-red-600 bg-red-500/10 flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] leading-relaxed">
+                    <strong>PERIGO DE PERDA:</strong> o arquivo não contém colaboradores e você tem{' '}
+                    {currentCollaboratorCount} no sistema. A substituição total vai <strong>apagar sua equipe atual</strong>.
+                    Haverá uma confirmação extra antes de aplicar.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
 
           {/* Safety Backup Checkbox */}
           <div className="p-3 bg-[var(--bg)] border border-[var(--line)] rounded-xl flex items-center gap-3">
@@ -163,13 +250,13 @@ export const ConfirmImportBackupModal: React.FC<ConfirmImportBackupModalProps> =
           <button
             onClick={handleConfirm}
             className={`px-5 py-2.5 text-white text-xs font-black rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer ${
-              mode === 'config_only'
+              isCalendarFile || mode === 'config_only'
                 ? 'bg-emerald-600 hover:bg-emerald-700'
                 : 'bg-red-600 hover:bg-red-700'
             }`}
           >
-            <ShieldCheck className="w-4 h-4" />
-            <span>Confirmar Importação</span>
+            {isCalendarFile ? <CalendarDays className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
+            <span>{isCalendarFile ? 'Mesclar Calendário' : 'Confirmar Importação'}</span>
           </button>
         </div>
       </div>

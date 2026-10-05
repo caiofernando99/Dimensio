@@ -42,9 +42,9 @@ import {
   formatDateLongBR,
   abbreviateNameFlexible,
   isScaleOff,
-  matchesSearch,
   getCollaboratorStatus,
 } from '../utils/helpers';
+import { filterPresentCollaborators } from '../utils/presenceFilters';
 import { Collaborator } from '../types';
 import { MarkdownContent } from './MarkdownContent';
 import { getConsolidatedTaskGroups, ConsolidatedTaskGroup } from '../utils/taskTreeHelpers';
@@ -523,42 +523,22 @@ export const QuickPresentationView169: React.FC<QuickPresentationView169Props> =
     const activeShiftVal =
       selectedShift !== 'ALL' ? selectedShift : state.selectedShiftFilter || state.teamShift || 'ALL';
 
-    return state.collaborators.filter((c) => {
-      const colShift = c.shift || 'Geral';
-
-      if (externalShifts && externalShifts.length > 0) {
-        if (!externalShifts.includes(colShift)) return false;
-      } else if (activeShiftVal !== 'ALL' && activeShiftVal !== 'todos') {
-        if (colShift !== activeShiftVal) return false;
-      }
-
-      const hasAbsence = (c.absences || []).some(
-        (a) => activeDate >= a.startDate && activeDate <= a.endDate
-      );
-      if (hasAbsence) return false;
-
-      const off = isScaleOff(state.calendar, activeDate, c.scale);
-      if (off) return false;
-
-      const manualAttendance = state.attendance[activeDate]?.[c.id];
-      if (manualAttendance === false) return false;
-
-      if (selectedRoles.length > 0 && !selectedRoles.includes(c.role || 'Operador')) return false;
-      if (selectedCategories.length > 0 && !selectedCategories.includes(c.category || 'Geral'))
-        return false;
-      if (
-        selectedTLs.length > 0 &&
-        !selectedTLs.includes(c.teamLeader || state.defaultTeamLeader || 'Sem Líder')
-      )
-        return false;
-      if (searchTerm && !matchesSearch(c.name, searchTerm)) return false;
-
-      return true;
+    // Fonte única em presenceFilters: sentinelas 'Todos' não filtram;
+    // status via getCollaboratorStatus (folga, atestado em objeto, extra).
+    return filterPresentCollaborators(state.collaborators, activeDate, state, {
+      shifts: externalShifts,
+      categories: selectedCategories,
+      roles: selectedRoles,
+      tls: selectedTLs,
+      search: searchTerm,
+      activeShift: activeShiftVal,
+      defaultTL: state.defaultTeamLeader || 'Sem Líder',
     });
   }, [
     state.collaborators,
     state.calendar,
     state.attendance,
+    state.dailyReports,
     activeDate,
     selectedShift,
     externalShifts,

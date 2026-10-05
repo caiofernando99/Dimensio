@@ -68,6 +68,7 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
+          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
           clientsClaim: true,
           skipWaiting: true,
           runtimeCaching: [
@@ -107,7 +108,9 @@ export default defineConfig(() => {
     },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // Ignora zips/artefatos grandes: um index.zip na raiz já derrubou o
+      // watcher do Vite com EBUSY (ver dev-server.log). Evita o crash.
+      watch: process.env.DISABLE_HMR === 'true' ? null : { ignored: ['**/*.zip', '**/*.zip.*', '**/dist/**'] },
     },
   };
 });

@@ -1,6 +1,40 @@
 export * from './types/interactions';
 
-export type ShiftGroup = 'A' | 'B' | 'C' | 'D';
+export type ShiftGroup = string;
+
+/** Nome de turma/equipe de escala definido pelo usuário (sem esquema fixo A/B/C/D). */
+export interface ScaleGroupDefinition {
+  id: string;
+  name: string;
+  color?: string;
+}
+
+export type CalendarDayOffInput = string | string[] | CalendarDay;
+
+/** Dia do calendário: suporta N turmas em folga + feriado com título + eventos. */
+export interface CalendarDay {
+  /** Turmas em folga neste dia (pode haver mais de uma). */
+  offGroups: string[];
+  /** Título do feriado/evento (ex: "Natal", "Tiradentes"). */
+  holidayTitle?: string;
+  /** Marca o dia como feriado (mesmo com trabalho permitido). */
+  isHoliday?: boolean;
+  /** Se true, a escala normal continua valendo mesmo no feriado. */
+  allowWorkOnHoliday?: boolean;
+  notes?: string;
+}
+
+/** Evento avulso do calendário (feriado, reunião, manutenção...). */
+export interface CalendarEventEntry {
+  id: string;
+  date: string; // YYYY-MM-DD
+  title: string;
+  type: 'feriado' | 'evento' | 'folga' | 'nota';
+  startTime?: string;
+  endTime?: string;
+  notes?: string;
+  allowWork?: boolean;
+}
 
 export type ScaleType = '6x2' | 'custom';
 
@@ -20,7 +54,7 @@ export interface Collaborator {
   login?: string;
   registration?: string;
   shift: string; // T1, T2, T3, T4, T5, Noite, etc.
-  scale: string; // A, B, C, D (6x2) or custom scale group
+  scale: string; // crew/scale group defined by the user (e.g. "Alfa", "Noturna", "A")
   teamLeader?: string; // e.g. "Time do TL Bruno"
   sector?: string; // Setor do colaborador (ex: "Logística", "Expedição", "Recebimento", "SAC / Suporte", "TI")
   allowedSectors?: string[]; // Setores autorizados para prestação de suporte / apoio cross-setor
@@ -490,6 +524,34 @@ export interface UserProfileData {
   updatedAt?: string;
 }
 
+export type CompanyManagerRole = 'owner' | 'admin';
+
+export type CompanyManagerStatus = 'active' | 'revoked';
+
+/**
+ * Gestor da empresa/setor com acesso administrativo ao workspace.
+ * - `owner` (dono): pode gerenciar outros gestores, transferir a titularidade
+ *   e alterar configurações críticas. Sempre existe ao menos 1 owner ativo.
+ * - `admin` (gestor): acesso administrativo operacional, mas não gerencia
+ *   outros gestores.
+ * A remoção é sempre lógica (`status: 'revoked'`) — nenhum dado operacional
+ * (colaboradores, tarefas, histórico) é apagado ao revogar um gestor.
+ */
+export interface CompanyManager {
+  id: string;
+  name: string;
+  email?: string; // identidade de login (Firebase Auth ou login local)
+  firebaseUid?: string;
+  collaboratorId?: string; // vínculo opcional com a base de colaboradores
+  role: CompanyManagerRole;
+  status: CompanyManagerStatus;
+  addedByName?: string;
+  createdAt: string; // ISO
+  revokedAt?: string; // ISO
+  revokedByName?: string;
+  notes?: string;
+}
+
 export interface IdentifiedUser {
   id: string; // collaboratorId or 'admin' or 'super_admin' or firebaseUid
   name: string;
@@ -504,6 +566,12 @@ export interface IdentifiedUser {
   isEditor: boolean;
   isAdmin: boolean;
   isSuperAdmin?: boolean;
+  /** Papel no quadro de gestores da empresa (quando vinculado). */
+  companyRole?: CompanyManagerRole | 'revoked';
+  /** true quando é dono (owner) ativo da empresa. */
+  isCompanyOwner?: boolean;
+  /** id do registro em companyManagers, quando vinculado. */
+  managerId?: string;
   accessLevel?: RoleAccessLevel;
   collaboratorId?: string;
   firebaseUid?: string;
@@ -915,7 +983,18 @@ export interface AppState {
   year: number;
   selectedDate: string; // YYYY-MM-DD
   theme: ThemeOption;
-  calendar: Record<string, string>; // YYYY-MM-DD -> scale group on OFF
+  /**
+   * YYYY-MM-DD -> turma(s) em folga.
+   * Formatos aceitos (retrocompatível):
+   * - string: "A" (legado, uma turma)
+   * - string[]: ["Alfa","Noturna"] (multi-folga)
+   * - CalendarDay: { offGroups, holidayTitle, isHoliday, allowWorkOnHoliday }
+   */
+  calendar: Record<string, string | string[] | CalendarDay>;
+  /** Definições das turmas criadas pelo usuário (substitui o fixo A/B/C/D). */
+  scaleGroupDefs?: ScaleGroupDefinition[];
+  /** Eventos/feriados do calendário, por data. Feriado pode ter título e ainda assim haver trabalho. */
+  calendarEvents?: Record<string, CalendarEventEntry[]>;
   collaborators: Collaborator[];
   deletedCollaborators?: DeletedCollaborator[];
   tempNotes?: Record<string, CollabNote[]>; // colaboradorId -> lembretes/observações temporárias
@@ -952,10 +1031,14 @@ export interface AppState {
   roleTypes?: Record<string, 'operacional' | 'administrativo'>;
   rolePermissions?: Record<string, RoleAccessLevel>; // Cargo -> Nível de acesso ('portal' | 'viewer' | 'editor' | 'admin')
   briefingConfig?: BriefingConfig;
+  /** Montador de slides v2 (modelo novo; briefingConfig legado fica arquivado). */
+  briefDeck?: import('./briefing/types').BriefDeck;
   feedbackConfig?: FeedbackConfig;
 
   // New features:
   editorRoles?: string[]; // Cargo(s) com permissão de Editor
+  /** Quadro de gestores da empresa (donos + administradores). */
+  companyManagers?: CompanyManager[];
   userPasswords?: Record<string, string>; // collaboratorId/login -> hashed password or string
   requireUserPassword?: boolean; // Configuração do setor: se exige senha obrigatória para todos os colaboradores (opcional vs obrigatório)
   autoBackupSettings?: AutoBackupSettings;

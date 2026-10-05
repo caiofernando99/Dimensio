@@ -55,12 +55,14 @@ import { APP_VERSION, BUILD_TS, GIT_COMMIT, APPS_SCRIPT_VERSION } from '../versi
 import { useApp } from '../context/AppContext';
 import { getAppsScriptCode } from '../utils/appsScriptCode';
 import { downloadExtensionZip, isExtensionInstalled } from '../utils/extensionInstaller';
+import { useI18n } from '../i18n';
 
 interface HelpViewProps {
   onOpenTutorial?: () => void;
 }
 
 export const HelpView: React.FC<HelpViewProps> = ({ onOpenTutorial }) => {
+  const { t } = useI18n();
   const {
     state,
     generateTemplateSpreadsheet,
@@ -140,10 +142,10 @@ export const HelpView: React.FC<HelpViewProps> = ({ onOpenTutorial }) => {
     { key: getShortcut('assignment', '2'), title: 'Dimensionamento', desc: 'Abre o painel de atribuição de tarefas e postos operacionais' },
     { key: getShortcut('breaks', '3'), title: 'Intervalos & Pausas', desc: 'Abre o escalonamento de horários de almoço e refeições' },
     { key: getShortcut('share', '4'), title: 'Resumo / Compartilhar', desc: 'Abre o painel de geração de links do Portal do Colaborador' },
-    { key: getShortcut('calendar', '5'), title: 'Calendário Anual 6x2', desc: 'Abre o mapa do ciclo anual de folgas das turmas A-H' },
+    { key: getShortcut('calendar', '5'), title: 'Calendário & Escalas', desc: 'Abre o mapa anual de folgas das turmas' },
     { key: getShortcut('team', '6'), title: 'Equipe e Cadastros', desc: 'Abre a gestão de colaboradores, logins, cargos e lixeira' },
     { key: getShortcut('info_hub', 'I'), title: 'Hub de Informações', desc: 'Abre os atalhos rápidos, lembretes e links úteis' },
-    { key: getShortcut('briefing', '7'), title: 'Montagem de Slide', desc: 'Abre a tela de briefing e apresentação fullscreen' },
+    { key: getShortcut('briefing', '7'), title: 'Montador de Slides', desc: 'Abre a tela de briefing e apresentação fullscreen' },
     { key: getShortcut('requests', '8'), title: 'Pedidos e Avisos', desc: 'Abre a central de solicitações de trocas e avisos do sistema' },
     { key: getShortcut('report', '9'), title: 'Relatório Diário', desc: 'Abre a auditoria diária e relatórios de alocação' },
     { key: getShortcut('home', '0'), title: 'Visão Geral (Dashboard)', desc: 'Retorna para o painel principal de métricas da operação' },
@@ -175,8 +177,8 @@ export const HelpView: React.FC<HelpViewProps> = ({ onOpenTutorial }) => {
       color: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
       title: 'Presença de Hoje',
       subtitle: 'Controle diário de frequência da operação',
-      desc: 'Registre entradas, ausências e faltas não justificadas. O sistema identifica e separa automaticamente colaboradores em Férias, Licença Médica, Treinamento ou em dia de Folga do Ciclo 6x2.',
-      highlights: ['Separação automática de folgas do ciclo 6x2', 'Histórico e justificativa de faltas', 'Filtros rápidos por time e turno'],
+      desc: 'Registre entradas, ausências e faltas não justificadas. O sistema identifica e separa automaticamente colaboradores em Férias, Licença Médica, Treinamento ou em dia de Folga da escala.',
+      highlights: ['Separação automática de folgas da escala', 'Histórico e justificativa de faltas', 'Filtros rápidos por time e turno'],
     },
     {
       icon: Shuffle,
@@ -205,10 +207,10 @@ export const HelpView: React.FC<HelpViewProps> = ({ onOpenTutorial }) => {
     {
       icon: Calendar,
       color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
-      title: 'Calendário Anual da Escala 6x2',
-      subtitle: 'Projeção automatizada de folgas e ciclos',
-      desc: 'Projeta o ciclo automático de folgas 6x2 para as Turmas A, B, C, D, E, F, G, H para todos os 365 dias do ano. Permite ajustes manuais e exportação/importação em formato JSON.',
-      highlights: ['Matriz visual dos 12 meses', 'Ajuste fino de folgas individuais', 'Sincronização com o dia de presença'],
+      title: 'Calendário & Escalas',
+      subtitle: 'Folgas das turmas, feriados e eventos',
+      desc: 'Monte o calendário com suas próprias turmas (nome e cor livres): uma ou várias em folga no mesmo dia, feriados com título e eventos. Permite ajustes manuais e exportação/importação em formato JSON.',
+      highlights: ['Matriz visual dos 12 meses', 'Múltiplas turmas em folga no mesmo dia', 'Sincronização com o dia de presença'],
     },
     {
       icon: Users,
@@ -264,13 +266,13 @@ export const HelpView: React.FC<HelpViewProps> = ({ onOpenTutorial }) => {
     <div className="space-y-6 max-w-6xl mx-auto pb-12 animate-in fade-in duration-200">
       <PageHeader
         icon={BookOpen}
-        title="Central de Ajuda, Guias & Documentação"
-        subtitle="Consulte os manuais operacionais, aprenda a usar o rádio PTT, conheça os atalhos de teclado e configure a sincronização com Google Sheets via Webhook."
-        meta={<Badge tone="primary">Documentação Oficial Dimensio</Badge>}
+        title={t('helpView.title')}
+        subtitle={t('helpView.subtitle')}
+        meta={<Badge tone="primary">Dimensio {APP_VERSION}</Badge>}
         actions={
           onOpenTutorial && (
             <Button size="sm" icon={Sparkles} onClick={onOpenTutorial}>
-              Abrir Tutorial Interativo
+              {t('common.help')}
             </Button>
           )
         }
@@ -279,13 +281,13 @@ export const HelpView: React.FC<HelpViewProps> = ({ onOpenTutorial }) => {
       <Toolbar className="justify-between">
         <Tabs
           items={[
-            { value: 'all', label: 'Visão Geral' },
+            { value: 'all', label: t('common.all') },
             { value: 'radio', label: 'Rádio PTT & Voz' },
-            { value: 'modules', label: 'Módulos Operacionais' },
-            { value: 'shortcuts', label: 'Atalhos de Teclado' },
+            { value: 'modules', label: t('helpView.tabGuides') },
+            { value: 'shortcuts', label: t('helpView.tabShortcuts') },
             { value: 'sheets', label: 'Google Sheets & Webhook' },
-            { value: 'extension', label: 'Extensão de Navegador' },
-            { value: 'faq', label: 'FAQ' },
+            { value: 'extension', label: t('helpView.tabExtension') },
+            { value: 'faq', label: t('helpView.tabFaq') },
           ]}
           value={activeTab}
           onChange={(v) => setActiveTab(v as typeof activeTab)}
@@ -297,7 +299,7 @@ export const HelpView: React.FC<HelpViewProps> = ({ onOpenTutorial }) => {
             type="text"
             value={searchDocQuery}
             onChange={(e) => setSearchDocQuery(e.target.value)}
-            placeholder="Buscar no manual..."
+            placeholder={t('helpView.searchHelpPlaceholder')}
             className="pl-8.5"
           />
         </div>
@@ -630,7 +632,7 @@ export const HelpView: React.FC<HelpViewProps> = ({ onOpenTutorial }) => {
                   <li><strong>Nome:</strong> Nome completo do colaborador (ex: <i>Ana Beatris Silva</i>).</li>
                   <li><strong>LDAP:</strong> Identificador único sem espaços (ex: <i>anabs</i>). Usado para consulta no Portal do Colaborador.</li>
                   <li><strong>Turno:</strong> Escolha entre <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">T1</code>, <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">T2</code>, <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">T3</code>, <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">T4</code> ou <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">T5</code>.</li>
-                  <li><strong>Turma da Escala (scale):</strong> Código do grupo do ciclo 6x2 (ex: <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">A</code>, <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">B</code>, <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">C</code>, <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">D</code>).</li>
+                  <li><strong>Turma da Escala (scale):</strong> Nome da turma cadastrada no Calendário (ex: <i>Alfa</i>, <i>Noturna</i> ou <i>A</i>). O colaborador folga nos dias marcados para a sua turma.</li>
                   <li><strong>Cargo (role):</strong> Sigla ou nome da função (ex: <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">REP</code>, <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">PS</code>, <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">TL</code>, <code className="bg-[var(--paper)] px-1 py-0.5 rounded font-bold">Operador de Processo</code>).</li>
                   <li><strong>Categoria (category):</strong> Setor operacional (ex: <i>Picking, Packing, Qualidade, Inventario, Put-Away</i>).</li>
                   <li><strong>Team Leader / Time:</strong> Nome do time ou supervisor responsável (ex: <i>Time do TL Bruno Silva (T1)</i>).</li>

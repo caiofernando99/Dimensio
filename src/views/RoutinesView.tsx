@@ -65,8 +65,10 @@ import {
   SingleSelectFilter,
 } from '../components/ui';
 import { SearchInput } from '../components/SearchInput';
+import { useI18n } from '../i18n';
 
 export const RoutinesView: React.FC = () => {
+  const { t } = useI18n();
   const {
     state,
     addScheduledTask,
@@ -478,8 +480,8 @@ export const RoutinesView: React.FC = () => {
     <div className="space-y-5">
       <PageHeader
         icon={ListTodo}
-        title="Programação & Rotinas"
-        subtitle="Agendamento, rotinas operacionais recorrentes, subtarefas e acompanhamento em tempo real"
+        title={t('routines.title')}
+        subtitle={t('routines.subtitle')}
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -496,7 +498,7 @@ export const RoutinesView: React.FC = () => {
               icon={Plus}
               onClick={() => openNewTaskModal()}
             >
-              Nova Tarefa
+              {t('routines.newTask')}
             </Button>
           </div>
         }
@@ -504,12 +506,12 @@ export const RoutinesView: React.FC = () => {
 
       {/* Overview Stat Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard label="Total de Tarefas" value={stats.total} icon={ListTodo} tone="default" />
-        <StatCard label="Para Hoje" value={stats.dueToday} icon={CalendarIcon} tone="warning" />
-        <StatCard label="Atrasadas" value={stats.overdue} icon={AlertCircle} tone="danger" />
-        <StatCard label="Pendentes" value={stats.pending} icon={Clock} tone="info" />
-        <StatCard label="Concluídas" value={stats.completed} icon={CheckCircle2} tone="success" />
-        <StatCard label="Rotinas Ativas" value={stats.routines} icon={Repeat} tone="purple" />
+        <StatCard label={t('common.total')} value={stats.total} icon={ListTodo} tone="default" />
+        <StatCard label={t('routines.dueToday')} value={stats.dueToday} icon={CalendarIcon} tone="warning" />
+        <StatCard label={t('routines.overdue')} value={stats.overdue} icon={AlertCircle} tone="danger" />
+        <StatCard label={t('routines.pending')} value={stats.pending} icon={Clock} tone="info" />
+        <StatCard label={t('routines.completed')} value={stats.completed} icon={CheckCircle2} tone="success" />
+        <StatCard label={t('routines.title')} value={stats.routines} icon={Repeat} tone="purple" />
       </div>
 
       {/* Filter and Mode Control Card */}

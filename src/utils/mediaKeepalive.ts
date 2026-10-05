@@ -37,7 +37,25 @@ class MediaKeepaliveManager {
   /**
    * Monitora gestos do usuário na tela para desbloquear o áudio automaticamente.
    */
-  private setupAutoUnlock() {
+    private workerPort: { postMessage: (m: unknown) => void } | null = null;
+    private lastPokeMs = 0;
+
+  /**
+   * Permite que o signalWorker (Web Worker, menos sujeito a throttling em
+   * segundo plano) mantenha o pipeline de mídia vivo: a cada tick do worker
+   * o app chama pokeFromWorker(). Sem isso, o setInterval do main thread é
+   * estrangulado para 1/min com a tela desligada e o SO suspende o app.
+   */
+  public attachWorkerPort(port: { postMessage: (m: unknown) => void } | null) {
+    this.workerPort = port;
+  }
+
+  public pokeFromWorker() {
+    this.lastPokeMs = Date.now();
+    this.ensurePlaying();
+  }
+
+    private setupAutoUnlock() {
     const unlock = () => {
       if (this.isRunning && this.audioCtx && this.audioCtx.state === 'suspended') {
         this.audioCtx.resume().catch(() => {});
@@ -53,8 +71,21 @@ class MediaKeepaliveManager {
 
     document.addEventListener('visibilitychange', () => {
       if (this.isRunning) {
+        // WakeLock de tela é revogado automaticamente ao ocultar; tenta
+        // recuperar imediatamente ao voltar a ficar visível.
+        if (!document.hidden) {
+          this.requestScreenWakeLock();
+        }
         this.ensurePlaying();
       }
+    });
+
+    // iOS/Safari: retoma o contexto ao voltar do background.
+    window.addEventListener('pageshow', () => {
+      if (this.isRunning) this.ensurePlaying();
+    });
+    window.addEventListener('focus', () => {
+      if (this.isRunning) this.ensurePlaying();
     });
   }
 
@@ -84,10 +115,12 @@ class MediaKeepaliveManager {
       view.setUint32(36, 0x64617461, false); // "data"
       view.setUint32(40, numSamples * 2, true);
 
-      // Injeta tom quase imperceptível de 30Hz com amplitude 1 (em 16-bit signed, -90dB)
-      // Evita detecção de silêncio puro pelo Android AudioFlinger
+      // Injeta tom de 55Hz com amplitude 48/32767 (~-57dB): inaudível na
+      // prática no alto-falante do celular, mas bem acima do limiar de
+      // detecção de silêncio do Android AudioFlinger. Amplitudes menores
+      // (ex: 12) eram classificadas como silêncio e o SO suspendia o app.
       for (let i = 0; i < numSamples; i++) {
-        const sample = Math.sin((2 * Math.PI * 30 * i) / sampleRate) * 12; // amplitude ~12 out of 32767
+        const sample = Math.sin((2 * Math.PI * 55 * i) / sampleRate) * 48;
         view.setInt16(44 + i * 2, Math.round(sample), true);
       }
 
@@ -213,13 +246,18 @@ class MediaKeepaliveManager {
         if (!this.destNode) {
           this.destNode = this.audioCtx.createMediaStreamDestination();
 
-          // Oscilador contínuo inaudível a 32Hz (infrassom para celular)
+          // CORREÇÃO CRÍTICA: 55Hz com ganho 0.02 (~-34dB no grafo) +
+          // el.volume = 1.0. Antes usávamos 32Hz @ -54dB com volume 0.05,
+          // o que o AudioFlinger classificava como silêncio digital e
+          // liberava o app para suspensão em ~30-60s de tela desligada.
+          // 55Hz está abaixo da resposta útil do micro-alto-falante (portanto
+          // inaudível), mas gera energia mensurável no HAL/DSP.
           const osc = this.audioCtx.createOscillator();
           osc.type = 'sine';
-          osc.frequency.setValueAtTime(32, this.audioCtx.currentTime);
+          osc.frequency.setValueAtTime(55, this.audioCtx.currentTime);
 
           const gain = this.audioCtx.createGain();
-          gain.gain.setValueAtTime(0.002, this.audioCtx.currentTime); // -54dB
+          gain.gain.setValueAtTime(0.02, this.audioCtx.currentTime);
 
           osc.connect(gain);
           gain.connect(this.destNode);
@@ -246,19 +284,26 @@ class MediaKeepaliveManager {
         el.src = this.fallbackBlobUrl;
       }
 
-      el.volume = 0.05; // Amplitude mínima aceita pelo Android para não marcar como 'silent'
+      // NUNCA usar volume baixo aqui: o Android marca streams com
+      // volume < ~0.2 como "silent" e remove a prioridade de foreground.
+      // O silêncio percebido vem do ganho baixo dentro do grafo, não do volume.
+      el.volume = 1.0;
       el.muted = false;
+      // @ts-ignore - preserva pitch em alguns WebViews Honeywell/Zebra
+      if ('preservesPitch' in el) (el as any).preservesPitch = false;
 
       await el.play();
 
       this.setupMediaSession(channelName);
       this.requestScreenWakeLock();
 
-      // Inicia verificação periódica de saúde da mídia
+      // Inicia verificação periódica de saúde da mídia. 10s em vez de 3s:
+      // o intervalo do main thread é estrangulado em background; o heartbeat
+      // real em 2º plano vem do signalWorker via pokeFromWorker().
       if (!this.keepaliveInterval) {
         this.keepaliveInterval = setInterval(() => {
           this.ensurePlaying();
-        }, 3000);
+        }, 10000);
       }
 
       this.notifyListeners(true);
@@ -280,7 +325,31 @@ class MediaKeepaliveManager {
       this.audioCtx.resume().catch(() => {});
     }
 
+    // Se o oscilador morreu (GC do contexto), recria sob demanda.
+    if (this.isRunning && this.audioCtx && !this.oscNode) {
+      try {
+        this.destNode = this.audioCtx.createMediaStreamDestination();
+        const osc = this.audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(55, this.audioCtx.currentTime);
+        const gain = this.audioCtx.createGain();
+        gain.gain.setValueAtTime(0.02, this.audioCtx.currentTime);
+        osc.connect(gain);
+        gain.connect(this.destNode);
+        osc.start();
+        this.oscNode = osc;
+        this.gainNode = gain;
+        if (this.audioEl && this.destNode.stream) {
+          try {
+            this.audioEl.srcObject = this.destNode.stream;
+          } catch {}
+        }
+      } catch {}
+    }
+
     if (this.audioEl && (this.audioEl.paused || this.audioEl.ended)) {
+      this.audioEl.volume = 1.0;
+      this.audioEl.muted = false;
       this.audioEl.play().catch(() => {});
     }
 
@@ -291,6 +360,17 @@ class MediaKeepaliveManager {
     }
 
     this.requestScreenWakeLock();
+  }
+
+  public getDiagnostics() {
+    return {
+      running: this.isRunning,
+      ctxState: this.audioCtx ? this.audioCtx.state : 'none',
+      elPaused: this.audioEl ? this.audioEl.paused : null,
+      elVolume: this.audioEl ? this.audioEl.volume : null,
+      hasStream: Boolean(this.destNode?.stream),
+      lastWorkerPokeMs: this.lastPokeMs,
+    };
   }
 
   /**
@@ -308,8 +388,15 @@ class MediaKeepaliveManager {
       try {
         this.audioEl.pause();
         this.audioEl.srcObject = null;
-        this.audioEl.src = '';
+        this.audioEl.removeAttribute('src');
+        this.audioEl.load();
       } catch {}
+    }
+    if (this.fallbackBlobUrl) {
+      try {
+        URL.revokeObjectURL(this.fallbackBlobUrl);
+      } catch {}
+      this.fallbackBlobUrl = null;
     }
 
     if (this.oscNode) {

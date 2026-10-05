@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
-import { AppState, AppWidgetsConfig, AuditLogEntry, AutoAssignOptions, AutoBackupInfo, AutoBackupSettings, BackupSnapshot, BreakGenerationMode, BreakRotationInfo, BreakSlot, BriefingConfig, Collaborator, DeletedCollaborator, ExtensionConfig, FeedbackConfig, IdentifiedUser, InfoHubLink, InfoHubQuickFill, InfoHubReminder, MetricDefinition, MetricReading, NotificationPreferences, OnlineSpreadsheetConfig, PresenceSyncEvent, PresenceSyncRecord, ProcessKnowledge, RoleAccessLevel, RoutineRecurrence, ScaleType, ScheduledAbsence, ScheduledTask, ScheduledTaskList, SectorDefinition, ServiceRequest, ShiftCustomConfig, ShiftGroup, SystemNotification, Task, TaskAreaCount, TeamDefinition, ThemeOption, UserPersonalPreferences, UserProfileData, UserWorkStatus } from '../types';
+import { AppState, AppWidgetsConfig, AuditLogEntry, AutoAssignOptions, AutoBackupInfo, AutoBackupSettings, BackupSnapshot, BreakGenerationMode, BreakRotationInfo, BreakSlot, BriefingConfig, Collaborator, CompanyManager, CompanyManagerRole, DeletedCollaborator, ExtensionConfig, FeedbackConfig, IdentifiedUser, InfoHubLink, InfoHubQuickFill, InfoHubReminder, MetricDefinition, MetricReading, NotificationPreferences, OnlineSpreadsheetConfig, PresenceSyncEvent, PresenceSyncRecord, ProcessKnowledge, RoleAccessLevel, RoutineRecurrence, ScaleType, ScheduledAbsence, ScheduledTask, ScheduledTaskList, SectorDefinition, ServiceRequest, ShiftCustomConfig, ShiftGroup, SystemNotification, Task, TaskAreaCount, TeamDefinition, ThemeOption, UserPersonalPreferences, UserProfileData, UserWorkStatus } from '../types';
 import { pushStateToFirestore, subscribeToFirestoreState, fetchStateFromFirestoreOnce, saveUserProfileToFirestore, getUserProfileFromFirestore, subscribeToUserProfile, saveUserScratchpad as saveUserScratchpadToFirestore, updateUserWorkStatus as updateUserWorkStatusInFirestore } from '../lib/firestoreStorage';
 import {
   auth,
@@ -15,7 +15,7 @@ import {
 } from '../lib/firebase';
 import { createCalendarEvent, deleteCalendarEvent, createGoogleTask, updateGoogleTaskStatus } from '../lib/workspace';
 import { THEME_OPTIONS } from '../constants';
-import { generateId, isScaleOff, getTodayISO, formatDateBR, getCollaboratorStatus, formatPersonName, applySuggestedScale6x2, isAbsenteeismStatus, getActiveAbsence, shuffleArray, calculateRotatingBreaks, BreakRotationExecutionResult, type StatusType } from '../utils/helpers';
+import { generateId, isScaleOff, getTodayISO, formatDateBR, getCollaboratorStatus, formatPersonName, isAbsenteeismStatus, getActiveAbsence, shuffleArray, calculateRotatingBreaks, BreakRotationExecutionResult, type StatusType, canonicalizeNameForSearch, normalizeSearchText } from '../utils/helpers';
 import { initialAppState, DEFAULT_FIRESTORE_CONFIG } from '../utils/initialData';
 import { SAMPLE_BACKUP_STATE } from '../data/sampleBackupData';
 import { normalizeAppState } from '../utils/stateNormalizer';
@@ -25,6 +25,28 @@ import { navigateTo, focusServiceRequest } from '../utils/navigation';
 import { dispatchQuickFillsToExtension, dispatchExtensionConfig } from '../utils/extensionInstaller';
 import { encodeConnectionParams, decodeConnectionParams } from '../utils/urlConnection';
 import { executeAutoAssign } from '../utils/autoAssignEngine';
+import type { BriefDeck, BriefKind, BriefSlide, BriefSlideData, BriefLayer } from '../briefing/types';
+import {
+  defaultDeck,
+  addSlide,
+  updateSlide,
+  patchSlideData,
+  moveSlide,
+  toggleSlide,
+  duplicateSlide,
+  removeSlide,
+  setSlideLayers,
+} from '../briefing/deck';
+import {
+  activeOwners,
+  matchActiveManager,
+  matchAnyManager,
+  canRevokeManager,
+  canChangeManagerRole,
+  buildManagerRecord,
+} from '../utils/companyManagers';
+import { isCalendarOnlyExport, unwrapBackupJson } from '../utils/backupImport';
+import { isPresentStatus } from '../utils/presenceFilters';
 import { getRootTask } from '../utils/taskTreeHelpers';
 import {
   SessionConfig,
@@ -49,7 +71,7 @@ interface AppContextType {
   updateShiftConfig: (shift: string, config: Partial<ShiftCustomConfig>) => void;
   updateTeamShift: (shift: string) => void;
   setSetupCompleted: (done: boolean) => void;
-  applySuggestedScaleCalendar: (year: number) => void;
+
   isSetupWizardOpen: boolean;
   openSetupWizard: () => void;
   closeSetupWizard: () => void;
@@ -70,7 +92,13 @@ interface AppContextType {
   updateBreakSlot: (id: string, updates: Partial<BreakSlot>) => void;
   deleteBreakSlot: (id: string) => void;
   addInterval: (collaboratorId: string, time: string) => void;
-  markDayScale: (dateStr: string, scale: ShiftGroup | '') => void;
+  markDayScale: (dateStr: string, scale: string | string[] | '') => void;
+  setDayHoliday: (dateStr: string, holiday: { title?: string; isHoliday?: boolean; allowWork?: boolean } | null) => void;
+  setDayOffGroups: (dateStr: string, groups: string[]) => void;
+  addCalendarEvent: (event: { date: string; title: string; type?: 'feriado' | 'evento' | 'folga' | 'nota'; startTime?: string; endTime?: string; notes?: string; allowWork?: boolean }) => void;
+  removeCalendarEvent: (date: string, eventId: string) => void;
+  upsertScaleGroup: (name: string, updates?: { newName?: string; color?: string }) => void;
+  removeScaleGroup: (name: string) => void;
   toggleAttendance: (collaboratorId: string, present: boolean) => void;
   setAttendanceStatus: (collaboratorId: string, status: 'presente' | 'ausente' | 'atestado' | 'banco_horas' | 'falta_injustificada' | 'atraso') => void;
   setStatusReason: (collaboratorId: string, status: StatusType, reason: string) => void;
@@ -155,6 +183,15 @@ interface AppContextType {
   updateProcessKnowledge: (id: string, updates: Partial<ProcessKnowledge>) => void;
   deleteProcessKnowledge: (id: string) => void;
   updateBriefingConfig: (updates: Partial<BriefingConfig>) => void;
+  setBriefDeck: (deck: BriefDeck) => void;
+  briefingAddSlide: (kind: BriefKind) => void;
+  briefingUpdateSlide: (id: string, patch: Partial<BriefSlide>) => void;
+  briefingPatchSlideData: (id: string, data: Partial<BriefSlideData>) => void;
+  briefingMoveSlide: (id: string, dir: -1 | 1) => void;
+  briefingToggleSlide: (id: string) => void;
+  briefingDuplicateSlide: (id: string) => void;
+  briefingRemoveSlide: (id: string) => void;
+  briefingSetLayers: (id: string, layers: BriefLayer[]) => void;
   updateFeedbackConfig: (updates: Partial<FeedbackConfig>) => void;
   updateExtensionConfig: (updates: Partial<ExtensionConfig>) => void;
   toggleSidebarCollapsed: () => void;
@@ -169,6 +206,14 @@ interface AppContextType {
   requestPasswordReset: (collaboratorId: string) => { success: boolean; message: string };
   authorizePasswordReset: (notificationId: string) => void;
   toggleEditorRole: (roleName: string) => void;
+
+  // Quadro de gestores da empresa (multi-donos, sem dono único)
+  addCompanyManager: (input: { name: string; email?: string; collaboratorId?: string; role: CompanyManagerRole; notes?: string }) => { success: boolean; message: string };
+  setCompanyManagerRole: (managerId: string, role: CompanyManagerRole) => { success: boolean; message: string };
+  revokeCompanyManager: (managerId: string) => { success: boolean; message: string };
+  reactivateCompanyManager: (managerId: string) => { success: boolean; message: string };
+  transferCompanyOwnership: (newOwnerId: string) => { success: boolean; message: string };
+  claimCompanyOwnership: () => { success: boolean; message: string };
 
   // Sessão & Segurança do dispositivo
   sessionConfig: SessionConfig;
@@ -515,8 +560,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           };
         }
         const normalized = normalizeAppState(parsed, initialAppState);
+        // Migração única: o menu lateral passa a iniciar recolhido por padrão.
+        // Quem já tinha estado salvo recebe o novo padrão uma vez; depois
+        // disso a escolha do usuário persiste normalmente.
+        let collapsed = normalized.isSidebarCollapsed;
+        try {
+          if (!localStorage.getItem('dimensio_sidebar_init_v1')) {
+            collapsed = true;
+            localStorage.setItem('dimensio_sidebar_init_v1', '1');
+          }
+        } catch {
+          // storage indisponível: mantém o normalizado
+        }
         return {
           ...normalized,
+          isSidebarCollapsed: collapsed ?? true,
           selectedDate: getTodayISO(),
           updatedAtMs: parsed.updatedAtMs || Date.now(),
         };
@@ -1207,14 +1265,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
-  const applySuggestedScaleCalendar = (year: number) => {
-    updateLocalState((prev) => ({
-      ...prev,
-      calendar: applySuggestedScale6x2(year, prev.scaleGroups),
-    }));
-    showNotice(`Calendário 6x2 sugerido aplicado para o ano ${year}.`);
-  };
-
   const setTheme = (theme: ThemeOption) => {
     updateLocalState((prev) => ({ ...prev, theme }));
     showNotice(`Tema alterado para ${theme}.`);
@@ -1621,16 +1671,153 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showNotice('Horário de intervalo removido.');
   };
 
-  const markDayScale = (dateStr: string, scale: string) => {
+  const markDayScale = (dateStr: string, scale: string | string[] | '') => {
     updateLocalState((prev) => {
-      const newCal = { ...prev.calendar };
-      if (scale) {
-        newCal[dateStr] = scale;
+      const newCal: Record<string, any> = { ...prev.calendar };
+      const currentRaw: any = (newCal as any)[dateStr];
+      const currentGroups: string[] = Array.isArray(currentRaw)
+        ? currentRaw.map(String)
+        : typeof currentRaw === 'string'
+          ? (currentRaw ? [currentRaw] : [])
+          : Array.isArray(currentRaw?.offGroups)
+            ? currentRaw.offGroups.map(String)
+            : [];
+      const currentHoliday = currentRaw && typeof currentRaw === 'object' && !Array.isArray(currentRaw)
+        ? { holidayTitle: currentRaw.holidayTitle, isHoliday: currentRaw.isHoliday, allowWorkOnHoliday: currentRaw.allowWorkOnHoliday, notes: currentRaw.notes }
+        : {};
+      if (Array.isArray(scale)) {
+        if (scale.length === 0 && !currentHoliday.holidayTitle && !currentHoliday.isHoliday) {
+          delete newCal[dateStr];
+        } else {
+          newCal[dateStr] = { ...currentHoliday, offGroups: [...scale] };
+        }
+      } else if (!scale) {
+        if (currentHoliday.holidayTitle || currentHoliday.isHoliday) {
+          newCal[dateStr] = { ...currentHoliday, offGroups: [] };
+        } else {
+          delete newCal[dateStr];
+        }
       } else {
-        delete newCal[dateStr];
+        const next = currentGroups.includes(scale)
+          ? currentGroups.filter((g) => g !== scale)
+          : [...currentGroups, scale];
+        if (next.length === 0 && !currentHoliday.holidayTitle && !currentHoliday.isHoliday) {
+          delete newCal[dateStr];
+        } else {
+          newCal[dateStr] = { ...currentHoliday, offGroups: next };
+        }
       }
       return { ...prev, calendar: newCal };
     });
+  };
+
+  const setDayOffGroups = (dateStr: string, groups: string[]) => {
+    markDayScale(dateStr, groups);
+  };
+
+  const setDayHoliday = (dateStr: string, holiday: { title?: string; isHoliday?: boolean; allowWork?: boolean } | null) => {
+    updateLocalState((prev) => {
+      const newCal: Record<string, any> = { ...prev.calendar };
+      const currentRaw: any = (newCal as any)[dateStr];
+      const currentGroups: string[] = Array.isArray(currentRaw)
+        ? currentRaw.map(String)
+        : typeof currentRaw === 'string'
+          ? (currentRaw ? [currentRaw] : [])
+          : Array.isArray(currentRaw?.offGroups)
+            ? currentRaw.offGroups.map(String)
+            : [];
+      if (!holiday || (!holiday.title && !holiday.isHoliday)) {
+        if (currentGroups.length === 0) {
+          delete newCal[dateStr];
+        } else {
+          newCal[dateStr] = { offGroups: currentGroups };
+        }
+      } else {
+        newCal[dateStr] = {
+          offGroups: currentGroups,
+          holidayTitle: holiday.title?.trim() || undefined,
+          isHoliday: true,
+          allowWorkOnHoliday: holiday.allowWork !== false,
+        };
+      }
+      return { ...prev, calendar: newCal };
+    });
+  };
+
+  const addCalendarEvent = (event: { date: string; title: string; type?: 'feriado' | 'evento' | 'folga' | 'nota'; startTime?: string; endTime?: string; notes?: string; allowWork?: boolean }) => {
+    if (!event.date || !event.title.trim()) return;
+    updateLocalState((prev) => {
+      const list = [...((prev.calendarEvents || {})[event.date] || [])];
+      list.push({
+        id: generateId(),
+        date: event.date,
+        title: event.title.trim(),
+        type: event.type || 'evento',
+        startTime: event.startTime,
+        endTime: event.endTime,
+        notes: event.notes,
+        allowWork: event.allowWork !== false,
+      });
+      return { ...prev, calendarEvents: { ...(prev.calendarEvents || {}), [event.date]: list } };
+    });
+    showNotice(`Evento "${event.title}" registrado em ${event.date}.`);
+  };
+
+  const removeCalendarEvent = (date: string, eventId: string) => {
+    updateLocalState((prev) => {
+      const list = ((prev.calendarEvents || {})[date] || []).filter((e) => e.id !== eventId);
+      const next = { ...(prev.calendarEvents || {}) };
+      if (list.length === 0) delete next[date];
+      else next[date] = list;
+      return { ...prev, calendarEvents: next };
+    });
+  };
+
+  const upsertScaleGroup = (name: string, updates?: { newName?: string; color?: string }) => {
+    const trimmed = (updates?.newName ?? name).trim();
+    if (!trimmed) return;
+    updateLocalState((prev) => {
+      const groups = [...(prev.scaleGroups || [])];
+      const defs = [...(prev.scaleGroupDefs || [])];
+      if (updates?.newName && updates.newName.trim() && updates.newName.trim() !== name) {
+        const idx = groups.indexOf(name);
+        if (idx >= 0) groups[idx] = updates.newName.trim();
+        const dIdx = defs.findIndex((d) => d.name === name || d.id === name);
+        if (dIdx >= 0) defs[dIdx] = { ...defs[dIdx], name: updates.newName.trim(), color: updates.color ?? defs[dIdx].color };
+        // Renomeia também nos dias já marcados e nos colaboradores
+        const newCal: Record<string, any> = {};
+        Object.entries(prev.calendar || {}).forEach(([k, v]: [string, any]) => {
+          if (typeof v === 'string') {
+            newCal[k] = v === name ? updates.newName!.trim() : v;
+          } else if (Array.isArray(v)) {
+            newCal[k] = v.map((g: string) => (g === name ? updates.newName!.trim() : g));
+          } else if (v && typeof v === 'object') {
+            newCal[k] = { ...v, offGroups: (v.offGroups || []).map((g: string) => (g === name ? updates.newName!.trim() : g)) };
+          }
+        });
+        const collaborators = (prev.collaborators || []).map((c) =>
+          c.scale === name ? { ...c, scale: updates.newName!.trim() } : c
+        );
+        return { ...prev, scaleGroups: groups, scaleGroupDefs: defs, calendar: newCal, collaborators };
+      }
+      if (!groups.includes(trimmed)) groups.push(trimmed);
+      if (!defs.some((d) => d.name === trimmed)) {
+        defs.push({ id: generateId(), name: trimmed, color: updates?.color });
+      } else if (updates?.color) {
+        const dIdx = defs.findIndex((d) => d.name === trimmed);
+        if (dIdx >= 0) defs[dIdx] = { ...defs[dIdx], color: updates.color };
+      }
+      return { ...prev, scaleGroups: groups, scaleGroupDefs: defs };
+    });
+  };
+
+  const removeScaleGroup = (name: string) => {
+    updateLocalState((prev) => ({
+      ...prev,
+      scaleGroups: (prev.scaleGroups || []).filter((g) => g !== name),
+      scaleGroupDefs: (prev.scaleGroupDefs || []).filter((d) => d.name !== name && d.id !== name),
+    }));
+    showNotice(`Turma "${name}" removida da lista (histórico dos dias mantido).`);
   };
 
   const toggleAttendance = (collaboratorId: string, present: boolean) => {
@@ -2778,13 +2965,11 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
   const saveHistory = () => {
     updateLocalState((prev) => {
       const dateKey = prev.selectedDate;
-      const presentCount = prev.collaborators.filter((c) => {
-        const hasAbsence = (c.absences || []).some((a) => dateKey >= a.startDate && dateKey <= a.endDate);
-        const off = isScaleOff(prev.calendar, dateKey, c.scale);
-        const manual = prev.attendance[dateKey]?.[c.id];
-        if (hasAbsence || off) return false;
-        return manual !== false;
-      }).length;
+      // Fonte única: entende folga, férias, atestado (inclusive override
+      // em objeto {absent, reason}) e presença extra em dia de folga.
+      const presentCount = prev.collaborators.filter((c) =>
+        isPresentStatus(getCollaboratorStatus(c, dateKey, prev as AppState).status)
+      ).length;
 
       const vacationCount = prev.collaborators.filter((c) =>
         (c.absences || []).some((a) => dateKey >= a.startDate && dateKey <= a.endDate && a.type === 'ferias')
@@ -2825,6 +3010,29 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       createAutoBackup(
         `Backup de Segurança Pré-Importação (${mode === 'config_only' ? 'Somente Estrutura' : 'Substituição Completa'})`
       );
+    }
+
+    // Blindagem: exportação parcial de calendário NUNCA vira substituição
+    // total — só mescla o calendário, mesmo que o chamador peça 'full'.
+    // (Importar `calendario-escala-*.json` como backup zerava a equipe.)
+    if (isCalendarOnlyExport(newStateCandidate)) {
+      const cal = unwrapBackupJson(newStateCandidate) as any;
+      const currentState = stateRef.current || state;
+      const next = {
+        ...currentState,
+        calendar: { ...currentState.calendar, ...(cal?.calendar || {}) },
+        ...(cal?.calendarEvents
+          ? { calendarEvents: { ...(currentState.calendarEvents || {}), ...cal.calendarEvents } }
+          : {}),
+        ...(cal?.scaleGroups ? { scaleGroups: cal.scaleGroups } : {}),
+        ...(cal?.scaleGroupDefs ? { scaleGroupDefs: cal.scaleGroupDefs } : {}),
+        ...(cal?.year ? { year: cal.year } : {}),
+        updatedAtMs: Date.now(),
+      };
+      stateRef.current = next;
+      setState(next);
+      showNotice('Arquivo de escala detectado: só o calendário foi mesclado. Colaboradores, tarefas, rotinas, pedidos e hub não foram alterados.');
+      return;
     }
 
     const currentState = stateRef.current || state;
@@ -3179,7 +3387,7 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       const tlName = col.teamLeader || state.defaultTeamLeader || 'Geral';
 
       let statusLabel = 'Presente';
-      if (st.status === 'folga') statusLabel = 'Folga (6x2)';
+      if (st.status === 'folga') statusLabel = 'Folga (escala)';
       else if (st.status === 'ferias') statusLabel = 'Férias';
       else if (st.status === 'licenca') statusLabel = 'Licença Médica';
       else if (st.status === 'treinamento') statusLabel = 'Treinamento';
@@ -3255,6 +3463,67 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
         ...(prev.briefingConfig || {}),
         ...updates,
       },
+    }));
+  };
+
+  // Montador de slides v2 — operações finas sobre o deck (autosave, sem botão salvar).
+  const setBriefDeck = (deck: BriefDeck) => {
+    updateLocalState((prev) => ({ ...prev, briefDeck: deck }));
+  };
+
+  const briefingAddSlide = (kind: BriefKind) => {
+    updateLocalState((prev) => ({
+      ...prev,
+      briefDeck: addSlide(prev.briefDeck || defaultDeck(), kind),
+    }));
+  };
+
+  const briefingUpdateSlide = (id: string, patch: Partial<BriefSlide>) => {
+    updateLocalState((prev) => ({
+      ...prev,
+      briefDeck: updateSlide(prev.briefDeck || defaultDeck(), id, patch),
+    }));
+  };
+
+  const briefingPatchSlideData = (id: string, data: Partial<BriefSlideData>) => {
+    updateLocalState((prev) => ({
+      ...prev,
+      briefDeck: patchSlideData(prev.briefDeck || defaultDeck(), id, data),
+    }));
+  };
+
+  const briefingMoveSlide = (id: string, dir: -1 | 1) => {
+    updateLocalState((prev) => ({
+      ...prev,
+      briefDeck: moveSlide(prev.briefDeck || defaultDeck(), id, dir),
+    }));
+  };
+
+  const briefingToggleSlide = (id: string) => {
+    updateLocalState((prev) => ({
+      ...prev,
+      briefDeck: toggleSlide(prev.briefDeck || defaultDeck(), id),
+    }));
+  };
+
+  const briefingDuplicateSlide = (id: string) => {
+    updateLocalState((prev) => ({
+      ...prev,
+      briefDeck: duplicateSlide(prev.briefDeck || defaultDeck(), id),
+    }));
+  };
+
+  const briefingRemoveSlide = (id: string) => {
+    updateLocalState((prev) => ({
+      ...prev,
+      briefDeck: removeSlide(prev.briefDeck || defaultDeck(), id),
+    }));
+  };
+
+  const briefingSetLayers = (id: string, layers: BriefLayer[]) => {
+    updateLocalState((prev) => ({
+      ...prev,
+      briefDeck: setSlideLayers(prev.briefDeck || defaultDeck(), id, layers),
     }));
   };
 
@@ -3428,6 +3697,24 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       // Fallback: match by exact name
       col = state.collaborators.find((c) => c.name.trim().toLowerCase() === collaboratorIdOrAdmin.trim().toLowerCase());
     }
+    if (!col) {
+      // Fallback tolerante: igualdade fonética (Matheus ↔ Mateus, Thiago ↔ Tiago)
+      const canonInput = canonicalizeNameForSearch(collaboratorIdOrAdmin);
+      if (canonInput) {
+        col = state.collaborators.find((c) => canonicalizeNameForSearch(c.name) === canonInput);
+      }
+    }
+    if (!col) {
+      // Último recurso: cada palavra digitada é prefixo de alguma palavra do nome
+      const tokens = normalizeSearchText(collaboratorIdOrAdmin).split(/\s+/).filter(Boolean);
+      if (tokens.length > 0) {
+        const cands = state.collaborators.filter((c) => {
+          const words = normalizeSearchText(c.name).split(/\s+/).filter(Boolean);
+          return tokens.every((t) => words.some((w) => w.startsWith(t)));
+        });
+        if (cands.length === 1) col = cands[0];
+      }
+    }
 
     // If not found in collaborators, check if it is a TL from teamLeaders or defaultTeamLeader
     let tlName: string | undefined;
@@ -3510,7 +3797,12 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       identifiedAt: Date.now(),
     };
 
-    setIdentifiedUser(user);
+    // Quadro de gestores: concede admin a gestores ativos, bloqueia revogados.
+    const userWithManagers = applyManagerOverlay(user);
+    if (userWithManagers.companyRole === 'revoked') {
+      showNotice('Seu acesso de gestor foi revogado por um dono da empresa. Acesso limitado ao portal.');
+    }
+    setIdentifiedUser(userWithManagers);
 
     // Auto-apply filters for user's shift & team leader upon identification
     if (userShift) {
@@ -3916,7 +4208,30 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       identifiedAt: Date.now(),
     };
 
-    setIdentifiedUser(userObj);
+    // Quadro de gestores: concede admin a gestores ativos, bloqueia revogados
+    // e semeia o primeiro dono quando o quadro ainda está vazio.
+    let sessionUser = applyManagerOverlay(userObj);
+    if (activeOwners(stateRef.current.companyManagers || []).length === 0 && sessionUser.isAdmin && sessionUser.companyRole !== 'revoked') {
+      const seed = buildManagerRecord({
+        name: displayName,
+        email,
+        firebaseUid: uid,
+        collaboratorId: col ? col.id : undefined,
+        role: 'owner',
+        addedByName: displayName,
+        notes: 'Dono inicial (primeiro acesso / cadastro da empresa).',
+      });
+      updateLocalState((prev) => ({
+        ...prev,
+        companyManagers: [seed, ...(prev.companyManagers || [])],
+      }));
+      sessionUser = { ...sessionUser, companyRole: 'owner', isCompanyOwner: true, managerId: seed.id };
+      addAuditLog('configuracao', `Quadro de gestores iniciado: "${displayName}" registrado como dono da empresa.`);
+    }
+    if (sessionUser.companyRole === 'revoked') {
+      showNotice('Seu acesso de gestor foi revogado por um dono da empresa. Você entrou apenas com acesso ao portal.', undefined, undefined, 'info');
+    }
+    setIdentifiedUser(sessionUser);
 
     const fullProfile: UserProfileData = {
       uid,
@@ -4163,6 +4478,269 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     });
     addAuditLog('configuracao', `Cargo "${roleName}" ${isNowEditor ? 'marcado como' : 'removido de'} Editor.`);
     showNotice(`Permissão de editor para o cargo "${roleName}" ${isNowEditor ? 'ativada' : 'desativada'}.`);
+  };
+
+  // COMPANY MANAGERS (quadro multi-gestores: sem dono único)
+  const myManagerRecord = (): CompanyManager | null => {
+    const u = identifiedUser;
+    if (!u) return null;
+    const list = stateRef.current.companyManagers || state.companyManagers || [];
+    if (u.managerId) {
+      const byId = list.find((m) => m.id === u.managerId) || null;
+      if (byId) return byId;
+    }
+    return matchActiveManager(list, { email: u.email, firebaseUid: u.firebaseUid, collaboratorId: u.collaboratorId, id: u.id });
+  };
+
+  const isMasterSession = (): boolean =>
+    identifiedUser?.isSuperAdmin === true || identifiedUser?.id === 'super_admin';
+
+  /** Aplica o quadro de gestores à sessão: concede admin a gestores ativos e bloqueia revogados. */
+  const applyManagerOverlay = (user: IdentifiedUser): IdentifiedUser => {
+    const list = stateRef.current.companyManagers || [];
+    if (list.length === 0) return user;
+    const active = matchActiveManager(list, {
+      email: user.email,
+      firebaseUid: user.firebaseUid,
+      collaboratorId: user.collaboratorId,
+      id: user.id,
+    });
+    if (active) {
+      return {
+        ...user,
+        isAdmin: true,
+        isEditor: true,
+        accessLevel: 'admin',
+        companyRole: active.role,
+        isCompanyOwner: active.role === 'owner',
+        managerId: active.id,
+      };
+    }
+    const any = matchAnyManager(list, {
+      email: user.email,
+      firebaseUid: user.firebaseUid,
+      collaboratorId: user.collaboratorId,
+    });
+    if (any && any.status === 'revoked') {
+      return {
+        ...user,
+        isAdmin: false,
+        isEditor: false,
+        accessLevel: 'portal',
+        companyRole: 'revoked',
+        isCompanyOwner: false,
+        managerId: any.id,
+      };
+    }
+    return user;
+  };
+
+  const addCompanyManager = (input: {
+    name: string;
+    email?: string;
+    collaboratorId?: string;
+    role: CompanyManagerRole;
+    notes?: string;
+  }): { success: boolean; message: string } => {
+    const fail = (message: string) => {
+      showNotice(message);
+      return { success: false, message };
+    };
+    const me = myManagerRecord();
+    if (!isMasterSession() && (!me || me.role !== 'owner')) {
+      return fail('Apenas donos da empresa podem adicionar gestores.');
+    }
+    const name = (input.name || '').trim();
+    if (!name) return fail('Informe o nome do gestor.');
+    const email = (input.email || '').trim();
+    if (!email && !input.collaboratorId) {
+      return fail('Informe ao menos o e-mail ou o vínculo com um colaborador.');
+    }
+    const list = stateRef.current.companyManagers || [];
+    if (email && list.some((m) => m.status === 'active' && (m.email || '').toLowerCase() === email.toLowerCase())) {
+      return fail('Já existe um gestor ativo com este e-mail.');
+    }
+    if (
+      input.collaboratorId &&
+      list.some((m) => m.status === 'active' && m.collaboratorId === input.collaboratorId)
+    ) {
+      return fail('Este colaborador já está vinculado a um gestor ativo.');
+    }
+    // Se ainda não há dono (legado), o primeiro gestor vira dono automaticamente.
+    const role: CompanyManagerRole = activeOwners(list).length === 0 ? 'owner' : input.role;
+    const rec = buildManagerRecord({
+      name,
+      email: email || undefined,
+      collaboratorId: input.collaboratorId || undefined,
+      role,
+      addedByName: identifiedUser?.name || 'Sistema',
+      notes: input.notes,
+    });
+    updateLocalState((prev) => ({
+      ...prev,
+      companyManagers: [rec, ...(prev.companyManagers || [])],
+    }));
+    addAuditLog('configuracao', `Gestor "${name}" adicionado como ${role === 'owner' ? 'DONO' : 'ADMIN'} por ${identifiedUser?.name || 'Sistema'}.`);
+    const msg = `Gestor "${name}" cadastrado como ${role === 'owner' ? 'dono' : 'administrador'}!`;
+    showNotice(msg);
+    return { success: true, message: msg };
+  };
+
+  const setCompanyManagerRole = (managerId: string, role: CompanyManagerRole): { success: boolean; message: string } => {
+    const fail = (message: string) => {
+      showNotice(message);
+      return { success: false, message };
+    };
+    const me = myManagerRecord();
+    const master = isMasterSession();
+    const list = stateRef.current.companyManagers || [];
+    const check = canChangeManagerRole(list, me?.id || null, managerId, role, master);
+    if (!check.ok) return fail(check.reason || 'Operação não permitida.');
+    const target = list.find((m) => m.id === managerId)!;
+    updateLocalState((prev) => ({
+      ...prev,
+      companyManagers: (prev.companyManagers || []).map((m) =>
+        m.id === managerId ? { ...m, role } : m
+      ),
+    }));
+    addAuditLog('configuracao', `Gestor "${target.name}" alterado para ${role === 'owner' ? 'DONO' : 'ADMIN'} por ${identifiedUser?.name || 'Sistema'}.`);
+    const msg = `"${target.name}" agora é ${role === 'owner' ? 'dono' : 'administrador'} da empresa.`;
+    showNotice(msg);
+    return { success: true, message: msg };
+  };
+
+  const revokeCompanyManager = (managerId: string): { success: boolean; message: string } => {
+    const fail = (message: string) => {
+      showNotice(message);
+      return { success: false, message };
+    };
+    const me = myManagerRecord();
+    const master = isMasterSession();
+    const list = stateRef.current.companyManagers || [];
+    const check = canRevokeManager(list, me?.id || null, managerId, master);
+    if (!check.ok) return fail(check.reason || 'Operação não permitida.');
+    const target = list.find((m) => m.id === managerId)!;
+    const selfRevoke = me?.id === managerId;
+    // Backup de segurança antes de revogar acesso (dados sempre protegidos).
+    createAutoBackup(`Pré-revogação do gestor ${target.name}`);
+    updateLocalState((prev) => ({
+      ...prev,
+      companyManagers: (prev.companyManagers || []).map((m) =>
+        m.id === managerId
+          ? { ...m, status: 'revoked' as const, revokedAt: new Date().toISOString(), revokedByName: identifiedUser?.name || 'Sistema' }
+          : m
+      ),
+    }));
+    addAuditLog('configuracao', `Acesso do gestor "${target.name}" REVOGADO por ${identifiedUser?.name || 'Sistema'}. Nenhum dado operacional foi apagado.`);
+    showNotice(`Acesso de "${target.name}" revogado. Os dados da empresa permanecem intactos.`);
+    if (selfRevoke) {
+      // Encerra a própria sessão elevada imediatamente.
+      logoutUser();
+      return { success: true, message: 'Seu próprio acesso foi revogado e a sessão foi encerrada.' };
+    }
+    return { success: true, message: `Acesso de "${target.name}" revogado.` };
+  };
+
+  const reactivateCompanyManager = (managerId: string): { success: boolean; message: string } => {
+    const fail = (message: string) => {
+      showNotice(message);
+      return { success: false, message };
+    };
+    const me = myManagerRecord();
+    if (!isMasterSession() && (!me || me.role !== 'owner')) {
+      return fail('Apenas donos da empresa podem reativar gestores.');
+    }
+    const list = stateRef.current.companyManagers || [];
+    const target = list.find((m) => m.id === managerId);
+    if (!target) return fail('Gestor não encontrado.');
+    if (target.status !== 'revoked') return fail('Gestor já está ativo.');
+    updateLocalState((prev) => ({
+      ...prev,
+      companyManagers: (prev.companyManagers || []).map((m) =>
+        m.id === managerId ? { ...m, status: 'active' as const, revokedAt: undefined, revokedByName: undefined } : m
+      ),
+    }));
+    addAuditLog('configuracao', `Acesso do gestor "${target.name}" REATIVADO por ${identifiedUser?.name || 'Sistema'}.`);
+    const msg = `Acesso de "${target.name}" reativado!`;
+    showNotice(msg);
+    return { success: true, message: msg };
+  };
+
+  const transferCompanyOwnership = (newOwnerId: string): { success: boolean; message: string } => {
+    const fail = (message: string) => {
+      showNotice(message);
+      return { success: false, message };
+    };
+    const me = myManagerRecord();
+    const master = isMasterSession();
+    const list = stateRef.current.companyManagers || [];
+    const target = list.find((m) => m.id === newOwnerId);
+    if (!target || target.status !== 'active') return fail('Escolha um gestor ativo para receber a titularidade.');
+    if (target.role === 'owner' && me && me.id !== target.id) {
+      return fail(`"${target.name}" já é dono. Para concentrar a titularidade, rebaixe os demais donos.`);
+    }
+    if (!master && (!me || me.role !== 'owner')) {
+      return fail('Apenas donos da empresa podem transferir a titularidade.');
+    }
+    // Backup de segurança antes da transferência.
+    createAutoBackup(`Pré-transferência de titularidade para ${target.name}`);
+    updateLocalState((prev) => ({
+      ...prev,
+      companyManagers: (prev.companyManagers || []).map((m) => {
+        if (m.id === newOwnerId) return { ...m, role: 'owner' as const };
+        // Quem transfere passa a coroa: vira admin (a chave mestra não entra no quadro).
+        if (me && m.id === me.id && m.id !== newOwnerId) return { ...m, role: 'admin' as const };
+        return m;
+      }),
+    }));
+    addAuditLog('configuracao', `Titularidade da empresa TRANSFERIDA para "${target.name}" por ${identifiedUser?.name || 'Sistema'}. Backup de segurança criado.`);
+    const msg = `"${target.name}" agora é dono da empresa!`;
+    showNotice(msg);
+    return { success: true, message: msg };
+  };
+
+  const claimCompanyOwnership = (): { success: boolean; message: string } => {
+    const fail = (message: string) => {
+      showNotice(message);
+      return { success: false, message };
+    };
+    const list = stateRef.current.companyManagers || [];
+    if (activeOwners(list).length > 0) {
+      return fail('A empresa já possui dono ativo. Peça a um dono para conceder o acesso.');
+    }
+    const u = identifiedUser;
+    if (!u || (!u.isAdmin && !u.isSuperAdmin)) {
+      return fail('Identifique-se como administrador para assumir a titularidade.');
+    }
+    const existing = matchAnyManager(list, { email: u.email, firebaseUid: u.firebaseUid, collaboratorId: u.collaboratorId });
+    if (existing) {
+      updateLocalState((prev) => ({
+        ...prev,
+        companyManagers: (prev.companyManagers || []).map((m) =>
+          m.id === existing.id ? { ...m, status: 'active' as const, role: 'owner' as const, revokedAt: undefined, revokedByName: undefined } : m
+        ),
+      }));
+    } else {
+      const rec = buildManagerRecord({
+        name: u.name,
+        email: u.email,
+        firebaseUid: u.firebaseUid,
+        collaboratorId: u.collaboratorId,
+        role: 'owner',
+        addedByName: u.name,
+        notes: 'Titularidade assumida (recuperação — não havia dono ativo).',
+      });
+      updateLocalState((prev) => ({
+        ...prev,
+        companyManagers: [rec, ...(prev.companyManagers || [])],
+      }));
+    }
+    // Reflete imediatamente na sessão atual.
+    setIdentifiedUser((curr) => (curr ? { ...curr, isAdmin: true, isEditor: true, accessLevel: 'admin', companyRole: 'owner' as const, isCompanyOwner: true } : curr));
+    addAuditLog('configuracao', `"${u.name}" assumiu a titularidade da empresa (não havia dono ativo).`);
+    const msg = 'Titularidade assumida: você agora é dono da empresa.';
+    showNotice(msg);
+    return { success: true, message: msg };
   };
 
   // AUTO BACKUP SETTINGS
@@ -5470,7 +6048,7 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     setState((prev) => {
       const nextState: AppState = {
         ...normalizedRemote,
-        isSidebarCollapsed: prev.isSidebarCollapsed ?? normalizedRemote.isSidebarCollapsed ?? false,
+        isSidebarCollapsed: prev.isSidebarCollapsed ?? normalizedRemote.isSidebarCollapsed ?? true,
         deletedNotificationIds: mergedDeletedIds,
         notifications: mergedNotifs,
         auditLogs: mergedAuditLogs,
@@ -7372,7 +7950,7 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
         updateShiftConfig,
         updateTeamShift,
         setSetupCompleted,
-        applySuggestedScaleCalendar,
+
         isSetupWizardOpen,
         openSetupWizard,
         closeSetupWizard,
@@ -7394,6 +7972,12 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
         deleteBreakSlot,
         addInterval,
         markDayScale,
+        setDayHoliday,
+        setDayOffGroups,
+        addCalendarEvent,
+        removeCalendarEvent,
+        upsertScaleGroup,
+        removeScaleGroup,
         toggleAttendance,
         setAttendanceStatus,
         setStatusReason,
@@ -7478,6 +8062,15 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
         updateProcessKnowledge,
         deleteProcessKnowledge,
         updateBriefingConfig,
+        setBriefDeck,
+        briefingAddSlide,
+        briefingUpdateSlide,
+        briefingPatchSlideData,
+        briefingMoveSlide,
+        briefingToggleSlide,
+        briefingDuplicateSlide,
+        briefingRemoveSlide,
+        briefingSetLayers,
         updateFeedbackConfig,
         updateExtensionConfig,
         toggleSidebarCollapsed,
@@ -7490,6 +8083,12 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
         requestPasswordReset,
         authorizePasswordReset,
         toggleEditorRole,
+        addCompanyManager,
+        setCompanyManagerRole,
+        revokeCompanyManager,
+        reactivateCompanyManager,
+        transferCompanyOwnership,
+        claimCompanyOwnership,
         sessionConfig,
         setSessionConfig,
         cloudOnline,

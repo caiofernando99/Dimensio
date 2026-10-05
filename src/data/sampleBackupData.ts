@@ -1,8 +1,22 @@
 import { AppState } from '../types';
-import { SUGGESTED_CALENDAR_2026 } from '../utils/suggestedScale';
 import { getTodayISO } from '../utils/helpers';
 import { DEFAULT_SUPPORT_TYPES } from '../utils/initialData';
 import { DEFAULT_TASK_LISTS } from '../utils/routineHelpers';
+
+// Calendário da massa de demonstração (Jul–Dez 2026): rotação simples entre
+// as turmas de exemplo. É conteúdo opt-in de demonstração — o produto não
+// possui mais nenhuma escala sugerida.
+function buildDemoCalendar(): Record<string, string> {
+  const groups = ['A', 'B', 'C', 'D'];
+  const cal: Record<string, string> = {};
+  const yearStart = new Date(2026, 0, 1);
+  for (let d = new Date(2026, 6, 1); d <= new Date(2026, 11, 31); d.setDate(d.getDate() + 1)) {
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const dayOfYear = Math.floor((d.getTime() - yearStart.getTime()) / 86400000);
+    cal[iso] = groups[Math.floor(dayOfYear / 2) % groups.length];
+  }
+  return cal;
+}
 
 export const SAMPLE_BACKUP_STATE: AppState = {
   updatedAtMs: Date.now(),
@@ -99,9 +113,7 @@ export const SAMPLE_BACKUP_STATE: AppState = {
   selectedDate: getTodayISO(),
   theme: 'dimensio',
   requireUserPassword: false,
-  calendar: {
-    ...SUGGESTED_CALENDAR_2026,
-  },
+  calendar: buildDemoCalendar(),
   collaborators: [
     {
       id: 'collab_1',

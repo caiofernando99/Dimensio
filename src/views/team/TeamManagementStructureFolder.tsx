@@ -160,10 +160,8 @@ export const TeamManagementStructureFolder: React.FC<TeamManagementStructureFold
           </Field>
           <Field label="Tipo de Escala">
             <div className="flex items-center gap-2 px-3 h-9 bg-[var(--paper)] border border-[var(--line)] rounded-lg text-[13px] font-bold text-[var(--ink)]">
-              <span>{state.scaleType === '6x2' ? '6x2' : 'Personalizada'}</span>
-              {state.scaleType === '6x2' && (
-                <Badge tone="primary">{(state.scaleGroups || []).join(' / ')}</Badge>
-              )}
+              <span>{state.scaleType === 'custom' ? 'Personalizada' : 'Por turmas'}</span>
+              <Badge tone="primary">{(state.scaleGroups || []).join(' / ') || '—'}</Badge>
             </div>
           </Field>
         </div>

@@ -35,16 +35,16 @@ import {
   Select,
   Modal,
 } from '../components/ui';
-import { ShiftGroup, AbsenceType, Task, Collaborator } from '../types';
+import { AbsenceType, Task, Collaborator } from '../types';
 import { TeamManagementStructureFolder } from './team/TeamManagementStructureFolder';
 import { TeamTasksAndMetricsFolder } from './team/TeamTasksAndMetricsFolder';
 import { TeamCollaboratorsFolder } from './team/TeamCollaboratorsFolder';
-
-const SHIFT_GROUPS: ShiftGroup[] = ['A', 'B', 'C', 'D'];
+import { useI18n } from '../i18n';
 
 export type TeamFolderType = 'structure' | 'tasks' | 'collaborators';
 
 export const TeamView: React.FC = () => {
+  const { t } = useI18n();
   const {
     state,
     addCollaborator,
@@ -267,7 +267,7 @@ export const TeamView: React.FC = () => {
     setBulkField('shift');
     setBulkShift(availableShifts[0] || 'Geral');
     setBulkTL(state.teamLeaders?.[0] || '');
-    setBulkScale(state.scaleGroups?.[0] || SHIFT_GROUPS[0]);
+    setBulkScale(state.scaleGroups?.[0] || '');
     setBulkRole(state.roles[0] || '');
     setBulkCategory(state.categories[0] || '');
     setBulkSkill(state.skills[0] || '');
@@ -336,8 +336,8 @@ export const TeamView: React.FC = () => {
       {/* Page Header */}
       <PageHeader
         icon={Users}
-        title="Gestão de Equipe, Estrutura e Cadastros"
-        subtitle="Configurações Operacionais da Operação"
+        title={t('team.title')}
+        subtitle={t('team.subtitle')}
         actions={
           <>
             {state.collaborators.length > 0 ? (
@@ -346,9 +346,9 @@ export const TeamView: React.FC = () => {
                 icon={Download}
                 className="!bg-emerald-600 hover:!bg-emerald-700"
                 onClick={exportTeamRosterSpreadsheet}
-                title="Exportar dados da equipe para planilha CSV"
+                title="CSV"
               >
-                Gerar Planilha ({state.collaborators.length} .CSV)
+                {t('team.exportSpreadsheet')} ({state.collaborators.length} .CSV)
               </Button>
             ) : (
               <Button
@@ -357,14 +357,14 @@ export const TeamView: React.FC = () => {
                 icon={FileSpreadsheet}
                 className="!border-emerald-500 !text-emerald-700 hover:!bg-emerald-50 dark:!text-emerald-300 dark:hover:!bg-emerald-950/40"
                 onClick={generateTemplateSpreadsheet}
-                title="Baixar planilha modelo (.CSV)"
+                title="CSV"
               >
-                Baixar Modelo (.CSV)
+                {t('common.download')} (.CSV)
               </Button>
             )}
             <label className="inline-flex items-center justify-center h-8 px-3 text-xs gap-1.5 rounded-lg font-bold select-none cursor-pointer transition-all duration-150 active:scale-[0.98] bg-[var(--paper)] text-[var(--ink)] border border-[var(--line)] hover:bg-[var(--bg)]">
               <Upload className="w-3.5 h-3.5 text-[var(--muted)]" />
-              <span>Importar Planilha</span>
+              <span>{t('team.importSpreadsheet')}</span>
               <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="hidden" />
             </label>
           </>
@@ -863,13 +863,11 @@ export const TeamView: React.FC = () => {
           {bulkField === 'scale' && (
             <Field label="Escala / Turma a aplicar:">
               <Select value={bulkScale} onChange={(e) => setBulkScale(e.target.value)}>
-                {(state.scaleGroups && state.scaleGroups.length ? state.scaleGroups : SHIFT_GROUPS).map(
-                  (grp) => (
-                    <option key={grp} value={grp}>
-                      Turma {grp}
-                    </option>
-                  )
-                )}
+                {(state.scaleGroups || []).map((grp) => (
+                  <option key={grp} value={grp}>
+                    Turma {grp}
+                  </option>
+                ))}
               </Select>
             </Field>
           )}
@@ -1028,9 +1026,7 @@ export const TeamView: React.FC = () => {
         onSave={handleSaveCollabFromModal}
         collabToEdit={collabToEdit || undefined}
         availableShifts={availableShifts}
-        availableScaleGroups={
-          state.scaleGroups && state.scaleGroups.length ? state.scaleGroups : SHIFT_GROUPS
-        }
+        availableScaleGroups={state.scaleGroups || []}
         availableTeamLeaders={state.teamLeaders || []}
         availableRoles={state.roles}
         availableCategories={state.categories}

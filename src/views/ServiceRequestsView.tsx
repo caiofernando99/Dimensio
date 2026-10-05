@@ -51,6 +51,7 @@ import { collabMenuOnContext } from '../utils/collabContextMenu';
 import { resolveSupportActionLink, formatSupportFieldsForClipboard } from '../utils/supportActionLink';
 import { consumePendingServiceRequestId, onFocusServiceRequest } from '../utils/navigation';
 import { dispatchHighlightToExtension, dispatchOpenSystemToExtension, isExtensionInstalled } from '../utils/extensionInstaller';
+import { useI18n } from '../i18n';
 
 // Live Stopwatch for tickets currently in progress
 const LiveDurationTimer: React.FC<{ startedAt: string }> = ({ startedAt }) => {
@@ -85,6 +86,7 @@ const LiveDurationTimer: React.FC<{ startedAt: string }> = ({ startedAt }) => {
 };
 
 export const ServiceRequestsView: React.FC = () => {
+  const { t } = useI18n();
   const {
     state,
     identifiedUser,
@@ -611,16 +613,12 @@ export const ServiceRequestsView: React.FC = () => {
     <div className="space-y-5 animate-fadeIn max-w-7xl mx-auto">
       <PageHeader
         icon={activeTab === 'helpdesk' ? Headphones : FileText}
-        title={activeTab === 'helpdesk' ? 'Central de Atendimento' : 'Pedidos de Serviço Sistêmicos'}
-        subtitle={
-          activeTab === 'helpdesk'
-            ? 'Fila em tempo real de chamados, suporte a coletores e solicitações da base operacional.'
-            : 'Comunicação direta para solicitações, troca de turnos e tarefas com link sistêmico.'
-        }
+        title={t('requests.title')}
+        subtitle={t('requests.subtitle')}
         actions={
           activeTab === 'systemic' ? (
             <Button icon={Plus} onClick={() => setIsCreating(true)}>
-              Novo Pedido Sistêmico
+              {t('requests.newRequest')}
             </Button>
           ) : undefined
         }
@@ -630,7 +628,7 @@ export const ServiceRequestsView: React.FC = () => {
         items={[
           {
             value: 'helpdesk',
-            label: 'Fila de Atendimento',
+            label: t('requests.title'),
             icon: Headphones,
             badge:
               waitingCount > 0 ? (
@@ -641,7 +639,7 @@ export const ServiceRequestsView: React.FC = () => {
           },
           {
             value: 'systemic',
-            label: 'Pedidos de Serviço Sistêmicos',
+            label: t('requests.subtitle'),
             icon: FileText,
             badge:
               filteredRequests.filter((r) => r.status === 'pendente').length > 0 ? (

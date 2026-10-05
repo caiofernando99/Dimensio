@@ -4,12 +4,13 @@ import { generateId, isScaleOff, getCollaboratorStatus, formatDateBR, getActiveA
 import { initialAppState } from '../utils/initialData';
 import { executeAutoAssign } from '../utils/autoAssignEngine';
 import { getRootTask } from '../utils/taskTreeHelpers';
+import { isPresentStatus } from '../utils/presenceFilters';
 
 interface ScheduleContextType {
   state: {
     year: number;
     selectedDate: string;
-    calendar: Record<string, string>;
+    calendar: Record<string, string | string[] | import('../types').CalendarDay>;
     tasks: Task[];
     breaks: BreakSlot[];
     attendance: Record<string, Record<string, boolean | { absent: true; reason: string }>>;
@@ -21,7 +22,7 @@ interface ScheduleContextType {
   };
   setDate: (date: string) => void;
   setYear: (year: number) => void;
-  markDayScale: (dateStr: string, scale: string) => void;
+  markDayScale: (dateStr: string, scale: string | string[]) => void;
   toggleAttendance: (collaboratorId: string, present: boolean) => void;
   setAttendanceStatus: (collaboratorId: string, status: 'presente' | 'ausente' | 'atestado' | 'banco_horas' | 'falta_injustificada' | 'atraso') => void;
   resetAttendance: () => void;
@@ -81,13 +82,46 @@ export const ScheduleProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     updateState((prev) => ({ ...prev, year }));
   };
 
-  const markDayScale = (dateStr: string, scale: string) => {
+  /**
+   * Marca/desmarca folga (multi-turma): string alterna (toggle) a turma no dia
+   * preservando feriado; array define exatamente as turmas; '' limpa as folgas.
+   */
+  const markDayScale = (dateStr: string, scale: string | string[]) => {
     updateState((prev) => {
-      const newCal = { ...prev.calendar };
-      if (scale) {
-        newCal[dateStr] = scale;
+      const newCal: Record<string, any> = { ...prev.calendar };
+      const currentRaw: any = (newCal as any)[dateStr];
+      const currentGroups: string[] = Array.isArray(currentRaw)
+        ? currentRaw.map(String)
+        : typeof currentRaw === 'string'
+          ? (currentRaw ? [currentRaw] : [])
+          : Array.isArray(currentRaw?.offGroups)
+            ? currentRaw.offGroups.map(String)
+            : [];
+      const currentHoliday = currentRaw && typeof currentRaw === 'object' && !Array.isArray(currentRaw)
+        ? { holidayTitle: currentRaw.holidayTitle, isHoliday: currentRaw.isHoliday, allowWorkOnHoliday: currentRaw.allowWorkOnHoliday, notes: currentRaw.notes }
+        : {};
+
+      if (Array.isArray(scale)) {
+        if (scale.length === 0 && !currentHoliday.holidayTitle && !currentHoliday.isHoliday) {
+          delete newCal[dateStr];
+        } else {
+          newCal[dateStr] = { ...currentHoliday, offGroups: [...scale] };
+        }
+      } else if (!scale) {
+        if (currentHoliday.holidayTitle || currentHoliday.isHoliday) {
+          newCal[dateStr] = { ...currentHoliday, offGroups: [] };
+        } else {
+          delete newCal[dateStr];
+        }
       } else {
-        delete newCal[dateStr];
+        const next = currentGroups.includes(scale)
+          ? currentGroups.filter((g) => g !== scale)
+          : [...currentGroups, scale];
+        if (next.length === 0 && !currentHoliday.holidayTitle && !currentHoliday.isHoliday) {
+          delete newCal[dateStr];
+        } else {
+          newCal[dateStr] = { ...currentHoliday, offGroups: next };
+        }
       }
       return { ...prev, calendar: newCal };
     });
@@ -484,18 +518,10 @@ export const ScheduleProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const dateKey = prev.selectedDate;
       const dayReport = prev.dailyReports[dateKey] || {};
       const snapshot = prev.collaborators.map((c) => {
-        const hasAbsence = (c.absences || []).find((a) => dateKey >= a.startDate && dateKey <= a.endDate);
-        const off = isScaleOff(prev.calendar, dateKey, c.scale);
-        const manual = prev.attendance[dateKey]?.[c.id];
+        const dayStatus = getCollaboratorStatus(c, dateKey, prev as any).status;
 
-        let status: 'presente' | 'ausente' | 'folga' | 'ferias' | 'licenca' | 'treinamento' | 'atestado' | 'banco_horas' | 'falta_injustificada' = 'presente';
-        if (hasAbsence) {
-          status = hasAbsence.type;
-        } else if (off) {
-          status = 'folga';
-        } else if (manual === false) {
-          status = 'ausente';
-        }
+        let status: 'presente' | 'ausente' | 'folga' | 'ferias' | 'licenca' | 'treinamento' | 'atestado' | 'banco_horas' | 'falta_injustificada' =
+          dayStatus === 'atraso' ? 'presente' : dayStatus;
 
         const task = prev.tasks.find((t) => t.members.includes(c.id))?.name || 'Não direcionado';
         const dayInt = prev.intervals[dateKey] || {};
@@ -529,13 +555,9 @@ export const ScheduleProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const saveHistory = () => {
     updateState((prev) => {
       const dateKey = prev.selectedDate;
-      const presentCount = prev.collaborators.filter((c) => {
-        const hasAbsence = (c.absences || []).some((a) => dateKey >= a.startDate && dateKey <= a.endDate);
-        const off = isScaleOff(prev.calendar, dateKey, c.scale);
-        const manual = prev.attendance[dateKey]?.[c.id];
-        if (hasAbsence || off) return false;
-        return manual !== false;
-      }).length;
+      const presentCount = prev.collaborators.filter((c) =>
+        isPresentStatus(getCollaboratorStatus(c, dateKey, prev as any).status)
+      ).length;
 
       const vacationCount = prev.collaborators.filter((c) =>
         (c.absences || []).some((a) => dateKey >= a.startDate && dateKey <= a.endDate && a.type === 'ferias')

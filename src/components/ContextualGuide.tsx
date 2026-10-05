@@ -72,18 +72,18 @@ const GUIDE_CONTENT: Record<string, GuideContent> = {
     ],
   },
   calendar: {
-    title: 'Calendário Anual da Escala 6x2',
+    title: 'Calendário & Escalas',
     subtitle: 'Visualize o ciclo de trabalho e folga de cada colaborador.',
     items: [
       {
         icon: CalendarDays,
         label: 'Grade mensal',
-        description: 'Navegue entre os meses e veja os dias de trabalho e folga de cada colaborador conforme o ciclo 6x2.',
+        description: 'Navegue entre os meses e veja os dias de trabalho e folga de cada colaborador conforme a escala das turmas.',
       },
       {
         icon: Wand2,
-        label: 'Sugestão oficial de escala',
-        description: 'O botão "Preencher calendário com a sugestão oficial" aplica o padrão 6x2 automaticamente para o ano.',
+        label: 'Turmas configuráveis',
+        description: 'Crie suas próprias turmas com nome e cor, marque uma ou várias em folga no mesmo dia e registre feriados com título.',
       },
       {
         icon: Users,
@@ -177,7 +177,7 @@ const GUIDE_CONTENT: Record<string, GuideContent> = {
       {
         icon: Clock,
         label: 'Horários por turno',
-        description: 'Defina os horários de intervalo de cada escala (Grupos A, B, C, D) para o turno.',
+        description: 'Defina os horários de intervalo de cada turma para o turno.',
       },
       {
         icon: RefreshCw,

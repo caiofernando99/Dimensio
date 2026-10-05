@@ -32,6 +32,8 @@ import {
   getCollaboratorStatus,
   matchesSearch,
   matchesCollaboratorSearch,
+  sortBySearchScore,
+  scoreCollaboratorSearch,
   compareStringsBR,
   sortCollaboratorsAlphabetical,
   parseSearchIntent,
@@ -323,9 +325,13 @@ export const GlobalSearch: React.FC = () => {
       color?: string;
     }> = [];
 
-    // Collabs matching active term
-    const matchedCollabs = state.collaborators.filter(
-      (c) => matchesSearch(c.name, activeTerm) || matchesSearch(c.login, activeTerm)
+    // Collabs matching active term (relevância: nome próprio primeiro)
+    const matchedCollabs = sortBySearchScore(
+      state.collaborators.filter(
+        (c) => matchesSearch(c.name, activeTerm) || matchesSearch(c.login, activeTerm)
+      ),
+      activeTerm,
+      { defaultTeamLeader: state.defaultTeamLeader }
     );
     matchedCollabs.slice(0, 5).forEach((c) => {
       suggestions.push({
@@ -441,13 +447,20 @@ export const GlobalSearch: React.FC = () => {
       .map((t) => t.trim())
       .filter(Boolean);
 
-    // Find collaborators matching any rawTerm
+    // Find collaborators matching any rawTerm (relevância primeiro)
     const autoMatchedCollabs = state.collaborators
       .filter((c) => {
         if (rawTerms.length === 0) return false;
         return rawTerms.some((term) => matchesCollaboratorSearch(c, term, { defaultTeamLeader: state.defaultTeamLeader }));
       })
-      .sort((a, b) => compareStringsBR(a.name, b.name));
+      .sort((a, b) => {
+        const term = rawTerms.join(' ');
+        const scoreDiff =
+          scoreCollaboratorSearch(b, term, { defaultTeamLeader: state.defaultTeamLeader }) -
+          scoreCollaboratorSearch(a, term, { defaultTeamLeader: state.defaultTeamLeader });
+        if (scoreDiff !== 0) return scoreDiff;
+        return compareStringsBR(a.name, b.name);
+      });
 
     // Find task matching any rawTerm
     const activeTasks = state.tasks.filter((t) => t.active !== false);
@@ -821,6 +834,14 @@ export const GlobalSearch: React.FC = () => {
         if (identifiedUser) {
           if (a.collab.id === identifiedUser.id) return -1;
           if (b.collab.id === identifiedUser.id) return 1;
+        }
+        // Relevância: nome próprio antes de time/líder (ex: "matheus"
+        // mostra os Matheus antes dos liderados por um Matheus)
+        if (q.trim()) {
+          const scoreDiff =
+            scoreCollaboratorSearch(b.collab, q, { defaultTeamLeader: state.defaultTeamLeader }) -
+            scoreCollaboratorSearch(a.collab, q, { defaultTeamLeader: state.defaultTeamLeader });
+          if (scoreDiff !== 0) return scoreDiff;
         }
         return compareStringsBR(a.collab.name, b.collab.name);
       });
@@ -1376,7 +1397,7 @@ export const GlobalSearch: React.FC = () => {
           </div>
           <div>
             <div className="text-[9px] font-black uppercase text-[var(--muted)] opacity-80">Escala</div>
-            <div className="font-extrabold text-[var(--ink)]">Turma {c.scale || 'A'}</div>
+            <div className="font-extrabold text-[var(--ink)]">Turma {c.scale || '—'}</div>
           </div>
           <div className="col-span-2">
             <div className="text-[9px] font-black uppercase text-[var(--muted)] opacity-80">Time / TL</div>

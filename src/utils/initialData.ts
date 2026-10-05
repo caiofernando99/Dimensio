@@ -1,6 +1,7 @@
 import { AppState, SupportTypePreset, OnlineSpreadsheetConfig } from '../types';
 import { DEFAULT_TASK_LISTS } from './routineHelpers';
 import { getTodayISO } from './helpers';
+import { defaultDeck } from '../briefing/deck';
 
 export const DEFAULT_FIRESTORE_CONFIG: OnlineSpreadsheetConfig = {
   url: '',
@@ -126,6 +127,7 @@ export const initialAppState: AppState = {
   year: new Date().getFullYear(),
   selectedDate: getTodayISO(),
   theme: 'dimensio',
+  isSidebarCollapsed: true,
   requireUserPassword: false,
   calendar: {},
   collaborators: [],
@@ -137,6 +139,7 @@ export const initialAppState: AppState = {
   history: [],
   dailyReports: {},
   onlineSpreadsheet: DEFAULT_FIRESTORE_CONFIG,
+  briefDeck: defaultDeck(),
   processKnowledgeList: [],
   showBriefingSlide: true,
   showEmployeePortal: true,
@@ -213,11 +216,13 @@ export const initialAppState: AppState = {
     groupSubtasks: true,
     headerAlignment: 'left',
   },
+  // Listas vazias = sem filtro. NUNCA usar sentinelas ('Todos'/'Todas') aqui:
+  // o filtro as tratava como allow-list literal e zerava o resumo.
   shareFilters: {
-    selectedShifts: ['Todos'],
-    selectedCategories: ['Todas'],
-    selectedRoles: ['Todos'],
-    selectedTLs: ['Todos'],
+    selectedShifts: [],
+    selectedCategories: [],
+    selectedRoles: [],
+    selectedTLs: [],
     searchTerm: '',
   },
   reportExportConfig: {

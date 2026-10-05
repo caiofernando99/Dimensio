@@ -22,12 +22,14 @@ import {
   ShieldAlert,
   Plus,
 } from 'lucide-react';
-import { getCollaboratorStatus, matchesCollaboratorSearch, formatDateBR, compareStringsBR } from '../utils/helpers';
+import { getCollaboratorStatus, matchesCollaboratorSearch, scoreCollaboratorSearch, formatDateBR, compareStringsBR } from '../utils/helpers';
 import { collabMenuOnContext } from '../utils/collabContextMenu';
 import { PageHeader, Card, CardHeader, StatCard, Badge, Button, Tabs, EmptyState, Toolbar } from '../components/ui';
+import { useI18n } from '../i18n';
 
 export const PresenceView: React.FC = () => {
   const { state, toggleAttendance, resetAttendance, setAbsenceReason, setAttendanceStatus, showNotice } = useApp();
+  const { t } = useI18n();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTLs, setSelectedTLs] = useState<string[]>(
     state.selectedTLFilter && state.selectedTLFilter !== 'ALL' && state.selectedTLFilter !== 'todos'
@@ -80,9 +82,17 @@ export const PresenceView: React.FC = () => {
   }, [state.collaborators, activeShift, selectedTLs, selectedRoles, selectedCategories, state.defaultTeamLeader, activeDate, state]);
 
   const presentList = useMemo(() => classified.filter((c) => c.status === 'presente' || c.status === 'atraso'), [classified]);
-  const filteredPresent = useMemo(() => presentList.filter((c) =>
+  // Com busca ativa, relevância primeiro (nome próprio acima do time)
+  const sortFilteredByScore = <T extends { collaborator: { name?: string } }>(list: T[]): T[] => {
+    if (!searchTerm.trim()) return list;
+    const extra = { defaultTeamLeader: state.defaultTeamLeader };
+    return [...list].sort(
+      (a, b) => scoreCollaboratorSearch(b.collaborator as any, searchTerm, extra) - scoreCollaboratorSearch(a.collaborator as any, searchTerm, extra)
+    );
+  };
+  const filteredPresent = useMemo(() => sortFilteredByScore(presentList.filter((c) =>
     matchesCollaboratorSearch(c.collaborator, searchTerm, { defaultTeamLeader: state.defaultTeamLeader })
-  ), [presentList, searchTerm, state.defaultTeamLeader]);
+  )), [presentList, searchTerm, state.defaultTeamLeader]);
   const vacationList = useMemo(() => classified.filter((c) => c.status === 'ferias'), [classified]);
   const leaveList = useMemo(() => classified.filter((c) => c.status === 'licenca'), [classified]);
   const trainingList = useMemo(() => classified.filter((c) => c.status === 'treinamento'), [classified]);
@@ -91,18 +101,18 @@ export const PresenceView: React.FC = () => {
   ), [classified]);
   const scaleOffList = useMemo(() => classified.filter((c) => c.status === 'folga'), [classified]);
 
-  const filteredVacation = useMemo(() => vacationList.filter((c) =>
+  const filteredVacation = useMemo(() => sortFilteredByScore(vacationList.filter((c) =>
     matchesCollaboratorSearch(c.collaborator, searchTerm, { defaultTeamLeader: state.defaultTeamLeader })
-  ), [vacationList, searchTerm, state.defaultTeamLeader]);
-  const filteredLeaveTraining = useMemo(() => [...leaveList, ...trainingList].filter((c) =>
+  )), [vacationList, searchTerm, state.defaultTeamLeader]);
+  const filteredLeaveTraining = useMemo(() => sortFilteredByScore([...leaveList, ...trainingList].filter((c) =>
     matchesCollaboratorSearch(c.collaborator, searchTerm, { defaultTeamLeader: state.defaultTeamLeader })
-  ), [leaveList, trainingList, searchTerm, state.defaultTeamLeader]);
-  const filteredAbsent = useMemo(() => absentList.filter((c) =>
+  )), [leaveList, trainingList, searchTerm, state.defaultTeamLeader]);
+  const filteredAbsent = useMemo(() => sortFilteredByScore(absentList.filter((c) =>
     matchesCollaboratorSearch(c.collaborator, searchTerm, { defaultTeamLeader: state.defaultTeamLeader })
-  ), [absentList, searchTerm, state.defaultTeamLeader]);
-  const filteredScaleOff = useMemo(() => scaleOffList.filter((c) =>
+  )), [absentList, searchTerm, state.defaultTeamLeader]);
+  const filteredScaleOff = useMemo(() => sortFilteredByScore(scaleOffList.filter((c) =>
     matchesCollaboratorSearch(c.collaborator, searchTerm, { defaultTeamLeader: state.defaultTeamLeader })
-  ), [scaleOffList, searchTerm, state.defaultTeamLeader]);
+  )), [scaleOffList, searchTerm, state.defaultTeamLeader]);
 
   const groupedByRoleCategory = useMemo(() => {
     const map: Record<string, typeof presentList> = {};
@@ -139,10 +149,10 @@ export const PresenceView: React.FC = () => {
   const dayReport = state.dailyReports[activeDate] || {};
 
   const absenceOptions = [
-    { value: 'atraso', label: 'Atraso (Início de Turno)', icon: Clock, color: 'text-amber-600' },
-    { value: 'falta_injustificada', label: 'Falta Injustificada', icon: ShieldAlert, color: 'text-rose-600' },
-    { value: 'atestado', label: 'Atestado Médico', icon: FileText, color: 'text-blue-600' },
-    { value: 'banco_horas', label: 'Banco de Horas', icon: PiggyBank, color: 'text-emerald-600' },
+    { value: 'atraso', label: t('presence.delayOption'), icon: Clock, color: 'text-amber-600' },
+    { value: 'falta_injustificada', label: t('presence.unjustifiedOption'), icon: ShieldAlert, color: 'text-rose-600' },
+    { value: 'atestado', label: t('presence.medicalOption'), icon: FileText, color: 'text-blue-600' },
+    { value: 'banco_horas', label: t('presence.hoursBankOption'), icon: PiggyBank, color: 'text-emerald-600' },
   ] as const;
 
   const [absenceDropdown, setAbsenceDropdown] = useState<{
@@ -233,7 +243,7 @@ export const PresenceView: React.FC = () => {
               <span className="truncate">{collaborator.name}</span>
               {isExtraPresence && (
                 <span className="text-[8.5px] font-black bg-purple-100 dark:bg-purple-950 text-purple-900 dark:text-purple-200 border border-purple-300 dark:border-purple-800 px-1.5 py-0.5 rounded-md shrink-0">
-                  TROCA
+                  {t('presence.swapBadge')}
                 </span>
               )}
             </div>
@@ -321,18 +331,18 @@ export const PresenceView: React.FC = () => {
   };
 
   const groupTabs = [
-    { value: 'cargo_categoria', label: 'Cargo + Categoria' },
-    { value: 'cargo', label: 'Por Cargo' },
-    { value: 'categoria', label: 'Por Categoria' },
-    { value: 'geral', label: 'Lista Geral' },
+    { value: 'cargo_categoria', label: t('presence.groupByRoleCategory') },
+    { value: 'cargo', label: t('presence.groupByRole') },
+    { value: 'categoria', label: t('presence.groupByCategory') },
+    { value: 'geral', label: t('presence.groupGeneral') },
   ];
 
   return (
     <div className="space-y-5">
       <PageHeader
         icon={CheckCircle2}
-        title="Presença de Hoje"
-        subtitle={`Controle de presença e frequência em tempo real • ${formatDateBR(activeDate)}`}
+        title={t('presence.title')}
+        subtitle={`${t('presence.subtitle')} • ${formatDateBR(activeDate)}`}
         actions={
           <Button
             variant="outline"
@@ -340,10 +350,10 @@ export const PresenceView: React.FC = () => {
             icon={RotateCcw}
             onClick={() => {
               resetAttendance();
-              showNotice('Escala e presenças restauradas para o padrão do dia!');
+              showNotice(t('presence.restoreNotice'));
             }}
           >
-            Restaurar Padrão
+            {t('presence.restoreDefault')}
           </Button>
         }
       />
@@ -352,8 +362,8 @@ export const PresenceView: React.FC = () => {
       <Card>
         <CardHeader
           icon={<Users className="w-4.5 h-4.5" />}
-          title="Filtros da Lista"
-          subtitle="Combine time, cargo e categoria para refinar a visualização."
+          title={t('presence.filtersTitle')}
+          subtitle={t('presence.filtersSubtitle')}
           actions={
             hasActiveFilters ? (
               <Button
@@ -367,7 +377,7 @@ export const PresenceView: React.FC = () => {
                   setSelectedCategories([]);
                 }}
               >
-                Limpar Filtros
+                {t('presence.clearFilters')}
               </Button>
             ) : undefined
           }
@@ -375,34 +385,34 @@ export const PresenceView: React.FC = () => {
         <div className="mt-3.5">
           <Toolbar>
             <MultiSelectFilter
-              label="Time / Líder (TL)"
+              label={t('presence.teamLeaderLabel')}
               options={tlOptions}
               selectedValues={selectedTLs}
               onChange={setSelectedTLs}
-              placeholder="Todos os times"
-              allLabel="Todos os Times"
+              placeholder={t('presence.allTeams')}
+              allLabel={t('presence.allTeams')}
               icon={<Users className="w-3 h-3 text-[var(--primary)]" />}
               className="flex-1 min-w-[170px]"
             />
 
             <MultiSelectFilter
-              label="Cargo"
+              label={t('presence.roleLabel')}
               options={roleOptions}
               selectedValues={selectedRoles}
               onChange={setSelectedRoles}
-              placeholder="Todos os cargos"
-              allLabel="Todos os Cargos"
+              placeholder={t('presence.allRoles')}
+              allLabel={t('presence.allRoles')}
               icon={<Briefcase className="w-3 h-3 text-[var(--primary)]" />}
               className="flex-1 min-w-[170px]"
             />
 
             <MultiSelectFilter
-              label="Categoria"
+              label={t('presence.categoryLabel')}
               options={categoryOptions}
               selectedValues={selectedCategories}
               onChange={setSelectedCategories}
-              placeholder="Todas as categorias"
-              allLabel="Todas as Categorias"
+              placeholder={t('presence.allCategories')}
+              allLabel={t('presence.allCategories')}
               icon={<Tag className="w-3 h-3 text-[var(--primary)]" />}
               className="flex-1 min-w-[170px]"
             />
@@ -411,7 +421,7 @@ export const PresenceView: React.FC = () => {
               <SearchInput
                 value={searchTerm}
                 onChange={setSearchTerm}
-                placeholder="Pesquisar colaborador..."
+                placeholder={t('presence.searchPlaceholder')}
                 className="w-full"
               />
             </div>
@@ -421,12 +431,12 @@ export const PresenceView: React.FC = () => {
 
       {/* Overview Status Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard label="Presentes" value={presentList.length} icon={CheckCircle2} tone="success" />
-        <StatCard label="Férias" value={vacationList.length} icon={Palmtree} tone="purple" />
-        <StatCard label="Licenças" value={leaveList.length} icon={Stethoscope} tone="warning" />
-        <StatCard label="Treinamentos" value={trainingList.length} icon={BookOpen} tone="info" />
-        <StatCard label="Ausentes" value={absentList.length} icon={XCircle} tone="danger" />
-        <StatCard label="Folga Escala" value={scaleOffList.length} icon={Sun} tone="default" />
+        <StatCard label={t('presence.presentTab')} value={presentList.length} icon={CheckCircle2} tone="success" />
+        <StatCard label={t('presence.vacationTab')} value={vacationList.length} icon={Palmtree} tone="purple" />
+        <StatCard label={t('presence.leaveTab')} value={leaveList.length} icon={Stethoscope} tone="warning" />
+        <StatCard label={t('presence.trainingTab')} value={trainingList.length} icon={BookOpen} tone="info" />
+        <StatCard label={t('presence.absentTab')} value={absentList.length} icon={XCircle} tone="danger" />
+        <StatCard label={t('presence.scaleOffTab')} value={scaleOffList.length} icon={Sun} tone="default" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -437,7 +447,7 @@ export const PresenceView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4.5 h-4.5 text-emerald-600" />
                 <h4 className="text-sm font-extrabold text-[var(--ink)]">
-                  Colaboradores Presentes ({presentList.length})
+                  {t('presence.presentCount')} ({presentList.length})
                 </h4>
               </div>
               <Tabs items={groupTabs} value={groupBy} onChange={(v) => setGroupBy(v as typeof groupBy)} className="max-w-full overflow-x-auto" />

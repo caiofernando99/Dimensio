@@ -68,7 +68,7 @@
         </div>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
         <!-- Mock 1: WMS Simulator -->
         <div class="bg-slate-800/90 border border-slate-700 hover:border-indigo-500/50 rounded-2xl p-5 transition-all shadow-md flex flex-col justify-between space-y-4">
           <div class="space-y-2.5">
@@ -134,6 +134,29 @@
           </div>
           <a href="/test-sandbox/kiosk-totem.html" target="_blank" class="w-full text-center py-2.5 bg-slate-700 hover:bg-amber-600 text-white text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2">
             <span>Abrir Totem Kiosk</span>
+            <span>↗</span>
+          </a>
+        </div>
+
+        <!-- Lab 4: Presence Lab (dados fictícios) -->
+        <div class="bg-slate-800/90 border border-slate-700 hover:border-emerald-500/50 rounded-2xl p-5 transition-all shadow-md flex flex-col justify-between space-y-4">
+          <div class="space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 text-[10px] font-black border border-emerald-500/20">
+                QA & Presença
+              </span>
+              <span class="text-xs text-slate-400">v1.0.0</span>
+            </div>
+            <h3 class="text-base font-black text-white">Laboratório de Presença</h3>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              Semear equipe fictícia (folga, atestado, presença extra, ausente) via API e no estado local do app para validar resumos e contagens.
+            </p>
+            <div class="text-[11px] text-slate-300 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800 space-y-1">
+              <div>🎯 <strong>Cenário de Teste:</strong> Reproduzir o bug "0 presentes" e conferir o checklist esperado.</div>
+            </div>
+          </div>
+          <a href="/test-sandbox/presence-lab.html" target="_blank" class="w-full text-center py-2.5 bg-slate-700 hover:bg-emerald-600 text-white text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2">
+            <span>Abrir Presence Lab</span>
             <span>↗</span>
           </a>
         </div>
@@ -333,6 +356,57 @@
         logOutput(json);
       } catch (err) {
         logOutput('Erro na requisição: ' + err.message);
+      }
+    }
+
+    // Empresas fictícias para testes (o botão "Carregar Empresa A" chamava
+    // esta função, que não existia — ReferenceError silencioso).
+    const MOCK_COMPANIES = {
+      logtech: {
+        label: 'LogTech Express CD 01',
+        collaborators: [
+          { id: 'mock-lt-1', name: 'Carlos Log (fictício)', login: 'carlos.log', registration: 'LT-001', shift: 'T1', scale: 'Alfa', role: 'TL' },
+          { id: 'mock-lt-2', name: 'Paula Docas (fictícia)', login: 'paula.docas', registration: 'LT-002', shift: 'T1', scale: 'Alfa', role: 'Operador' },
+          { id: 'mock-lt-3', name: 'Rafa Picking (fictício)', login: 'rafa.pick', registration: 'LT-003', shift: 'T2', scale: 'Noturna', role: 'Operador' },
+          { id: 'mock-lt-4', name: 'Ju Expedição (fictícia)', login: 'ju.exp', registration: 'LT-004', shift: 'T2', scale: 'Noturna', role: 'Operador' },
+        ],
+        tasks: [{ id: 'mock-task-pick', name: 'Picking A', area: 'Operação', members: ['mock-lt-2', 'mock-lt-3'], externalUrl: '' }],
+      },
+      hospital: {
+        label: 'Hospital & Saúde Vita',
+        collaborators: [
+          { id: 'mock-hv-1', name: 'Dra. Fernanda (fictícia)', login: 'dra.fernanda', registration: 'HV-001', shift: 'T1', scale: 'Alfa', role: 'TL' },
+          { id: 'mock-hv-2', name: 'Tec. Paulo (fictício)', login: 'paulo.tec', registration: 'HV-002', shift: 'T1', scale: 'Alfa', role: 'Operador' },
+        ],
+        tasks: [{ id: 'mock-task-triagem', name: 'Triagem', area: 'Saúde', members: ['mock-hv-2'], externalUrl: '' }],
+      },
+      stark: {
+        label: 'Manufatura Stark S/A',
+        collaborators: [
+          { id: 'mock-st-1', name: 'Eng. Roberto (fictício)', login: 'eng.roberto', registration: 'ST-001', shift: 'T1', scale: 'Alfa', role: 'TL' },
+          { id: 'mock-st-2', name: 'Op.Ana CNC (fictícia)', login: 'ana.cnc', registration: 'ST-002', shift: 'T1', scale: 'Alfa', role: 'Operador' },
+        ],
+        tasks: [{ id: 'mock-task-cnc', name: 'Linha CNC', area: 'Indústria', members: ['mock-st-2'], externalUrl: '' }],
+      },
+    };
+
+    async function injectMockCompanyIntoLocal(key) {
+      const mock = MOCK_COMPANIES[key];
+      if (!mock) {
+        logOutput('Empresa fictícia "' + key + '" não cadastrada no sandbox.');
+        return;
+      }
+      if (!window.confirm('Semear "' + mock.label + '" no servidor dev local? Isso substitui o roster em memória do backend.')) return;
+      logOutput('Semeando ' + mock.label + ' via POST /api/dimensio/sync…');
+      try {
+        const res = await fetch('/api/dimensio/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ collaborators: mock.collaborators, tasks: mock.tasks }),
+        });
+        logOutput(await res.json());
+      } catch (err) {
+        logOutput('Erro ao semear: ' + err.message);
       }
     }
 

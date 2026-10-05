@@ -8,8 +8,11 @@
 
 import type { SignalMessage } from '../communication/types';
 
-const HEARTBEAT_MS_DEFAULT = 3000;
-const POLL_MS_DEFAULT = 1000;
+// ALÍVIO DE CARGA (2026): polling de 1s/3s por cliente derrubava o backend
+// com 20+ coletores. Novos padrões: poll 2.5s + heartbeat 8s. O handshake
+// PTT continua rápido pois o primeiro tick é imediato (ver start()).
+const HEARTBEAT_MS_DEFAULT = 8000;
+const POLL_MS_DEFAULT = 2500;
 
 const workerSelf = self as unknown as {
   postMessage(message: unknown): void;
@@ -192,6 +195,9 @@ async function tick() {
 
   workerSelf.postMessage({ type: 'relayOnline', ok: postOk && pollOk });
   workerSelf.postMessage({ type: 'tick', now });
+  // Mantém o Modo de Mídia vivo em 2º plano: o main thread chama
+  // mediaKeepalive.pokeFromWorker() a cada tick recebido.
+  workerSelf.postMessage({ type: 'keepalive-ping', now });
 }
 
 function start() {

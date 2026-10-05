@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { DimensioLogo, DimensioMonogram } from './DimensioLogo';
+import { matchesCollaboratorSearch, sortBySearchScore } from '../utils/helpers';
 import { useI18n } from '../i18n';
 import {
   Search,
@@ -139,18 +140,16 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
         (c) => (c.sector || state.sector || '').toLowerCase() === selectedSector.toLowerCase()
       );
     }
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return list.slice(0, 50);
-    return list
-      .filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          (c.registration || '').toLowerCase().includes(q) ||
-          (c.login || '').toLowerCase().includes(q) ||
-          (c.sector || '').toLowerCase().includes(q)
-      )
-      .slice(0, 50);
-  }, [collaborators, selectedSector, state.sector, query]);
+    // Mesmo matcher do resto do app (acentos, Matheus↔Mateus) + relevância:
+    // nome próprio antes de time/líder.
+    return sortBySearchScore(
+      list.filter((c) => matchesCollaboratorSearch(c, q, { defaultTeamLeader: state.defaultTeamLeader })),
+      q,
+      { defaultTeamLeader: state.defaultTeamLeader }
+    ).slice(0, 50);
+  }, [collaborators, selectedSector, state.sector, state.defaultTeamLeader, query]);
 
   const selectedCollab = selectedId ? collaborators.find((c) => c.id === selectedId) : null;
   const selectedSectorDef = useMemo(() => {
@@ -348,21 +347,58 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
           <div className="space-y-3">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs font-black">
               <Zap className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-              <span>Arquitetura em Nuvem com Firestore & Tempo Real</span>
+              <span>{t('auth.featuresHighlight')}</span>
             </div>
 
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[var(--ink)] leading-[1.15]">
-              Dimensionamento de equipes sem servidores ou planilhas complexas.
+              {t('auth.welcome')}
             </h1>
 
             <p className="text-sm sm:text-base text-[var(--muted)] leading-relaxed max-w-2xl">
-              O Dimensio unifica a escala de turnos, matriz de postos de trabalho, intervalos NR-17 e rádio PTT em tempo real. Cadastre sua empresa em 30 segundos e opere instantaneamente em qualquer dispositivo.
+              {t('auth.welcomeSub')}
             </p>
           </div>
 
           {/* Feature Highlights Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2">
-            {FEATURES.map((item, idx) => {
+            {[
+              {
+                icon: LayoutGrid,
+                title: t('features.dimensioningTitle'),
+                description: t('features.dimensioningDesc'),
+                tag: 'Operacional',
+              },
+              {
+                icon: Radio,
+                title: t('features.radioTitle'),
+                description: t('features.radioDesc'),
+                tag: 'PTT',
+              },
+              {
+                icon: Timer,
+                title: t('features.breaksTitle'),
+                description: t('features.breaksDesc'),
+                tag: 'NR-17',
+              },
+              {
+                icon: Smartphone,
+                title: t('features.portalTitle'),
+                description: t('features.portalDesc'),
+                tag: 'Mobile',
+              },
+              {
+                icon: Cloud,
+                title: t('features.cloudTitle'),
+                description: t('features.cloudDesc'),
+                tag: 'Firestore',
+              },
+              {
+                icon: BarChart3,
+                title: t('features.reportsTitle'),
+                description: t('features.reportsDesc'),
+                tag: 'Auditoria',
+              },
+            ].map((item, idx) => {
               const Icon = item.icon;
               return (
                 <div
@@ -390,12 +426,12 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
 
           <div className="pt-2 flex flex-wrap items-center gap-4 text-xs text-[var(--muted)] font-medium">
             <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-bold">
-              <Check className="w-4 h-4" /> 100% Gratuito no Firebase Spark
+              <Check className="w-4 h-4" /> {t('auth.freeSparkBadge')}
             </span>
             <span>·</span>
-            <span>Sem necessidade de cartão de crédito</span>
+            <span>{t('auth.noCardRequired')}</span>
             <span>·</span>
-            <span>Multi-dispositivos instantâneo</span>
+            <span>{t('auth.multiDevice')}</span>
           </div>
         </section>
 
@@ -405,7 +441,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
             <DimensioLogo size="md" variant="auto" showWordmark={true} />
             <span className="text-[11px] font-bold text-[var(--muted)] flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              {t('featuresHighlight', {})}
+              {t('auth.cloudActive')}
             </span>
           </div>
 
@@ -487,16 +523,16 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                 <form onSubmit={handleCompanySignUp} className="space-y-3.5">
                   <div className="space-y-1">
                     <h2 className="text-sm font-black text-[var(--ink)]">
-                      Cadastre sua Empresa ou Unidade
+                      {t('auth.registerNewCompany')}
                     </h2>
                     <p className="text-[11px] text-[var(--muted)] font-medium">
-                      O espaço de trabalho e banco de dados no Firestore serão configurados automaticamente.
+                      {t('auth.cloudSubtitle')}
                     </p>
                   </div>
 
                   <div>
                     <label className="block text-[11px] font-bold text-[var(--ink)] uppercase tracking-wider mb-1">
-                      Nome da Empresa / Operação *
+                      {t('auth.companyName')}
                     </label>
                     <div className="relative">
                       <Building2 className="w-4 h-4 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
@@ -504,7 +540,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                         type="text"
                         value={companyName}
                         onChange={(e) => setCompanyName(e.target.value)}
-                        placeholder="Ex: CD Logística Campinas, Hospital São Lucas"
+                        placeholder={t('auth.companyPlaceholder')}
                         required
                         className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-[var(--ink)] placeholder:text-[var(--muted)]/60 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                       />
@@ -514,26 +550,26 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
                       <label className="block text-[11px] font-bold text-[var(--ink)] uppercase tracking-wider mb-1">
-                        Seu Nome *
+                        {t('auth.managerName')}
                       </label>
                       <input
                         type="text"
                         value={displayName}
                         onChange={(e) => setDisplayName(e.target.value)}
-                        placeholder="Ex: Carlos Pereira"
+                        placeholder={t('auth.managerPlaceholder')}
                         required
                         className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-xl px-3 py-2 text-xs font-medium text-[var(--ink)] placeholder:text-[var(--muted)]/60 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                       />
                     </div>
                     <div>
                       <label className="block text-[11px] font-bold text-[var(--ink)] uppercase tracking-wider mb-1">
-                        Setor Principal
+                        {t('auth.sector')}
                       </label>
                       <input
                         type="text"
                         value={initialSector}
                         onChange={(e) => setInitialSector(e.target.value)}
-                        placeholder="Ex: Operações, Logística"
+                        placeholder={t('auth.sectorPlaceholder')}
                         className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-xl px-3 py-2 text-xs font-medium text-[var(--ink)] placeholder:text-[var(--muted)]/60 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                       />
                     </div>
@@ -541,7 +577,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
 
                   <div>
                     <label className="block text-[11px] font-bold text-[var(--ink)] uppercase tracking-wider mb-1">
-                      E-mail do Gestor *
+                      {t('auth.email')}
                     </label>
                     <div className="relative">
                       <Mail className="w-4 h-4 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
@@ -549,7 +585,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        placeholder="gestor@empresa.com"
+                        placeholder={t('auth.emailPlaceholder')}
                         required
                         className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-[var(--ink)] placeholder:text-[var(--muted)]/60 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                       />
@@ -558,7 +594,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
 
                   <div>
                     <label className="block text-[11px] font-bold text-[var(--ink)] uppercase tracking-wider mb-1">
-                      Senha de Acesso * (mínimo 6 dígitos)
+                      {t('auth.password')}
                     </label>
                     <div className="relative">
                       <KeyRound className="w-4 h-4 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
@@ -566,7 +602,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                         type="password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        placeholder="••••••••"
+                        placeholder={t('auth.passwordPlaceholder')}
                         required
                         minLength={6}
                         className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-[var(--ink)] placeholder:text-[var(--muted)]/60 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
@@ -583,7 +619,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                       <RefreshCw className="w-4 h-4 animate-spin" />
                     ) : (
                       <>
-                        <span>Criar Empresa e Acessar Nuvem</span>
+                        <span>{t('auth.createCompanyAndAccess')}</span>
                         <ArrowRight className="w-4 h-4" />
                       </>
                     )}
@@ -595,7 +631,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                       onClick={() => setMode('login')}
                       className="text-[11px] text-[var(--muted)] hover:text-[var(--ink)] font-semibold transition-colors cursor-pointer"
                     >
-                      Já possui uma conta ou empresa cadastrada? <strong className="text-indigo-600 dark:text-indigo-400">Fazer login</strong>
+                      {t('auth.alreadyHaveAccount')} <strong className="text-indigo-600 dark:text-indigo-400">{t('auth.login')}</strong>
                     </button>
                   </div>
                 </form>
@@ -622,17 +658,17 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                           <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
                         </svg>
                       )}
-                      <span>{isLoading ? 'Conectando...' : 'Entrar com Conta Google Workspace'}</span>
+                      <span>{isLoading ? t('common.connecting') : t('auth.googleLogin')}</span>
                     </button>
                     <p className="text-[10px] text-center text-[var(--muted)] font-medium mt-1">
-                      Acesso seguro e direto com sua conta Google
+                      {t('auth.googleLoginDesc')}
                     </p>
                   </div>
 
                   <div className="relative flex py-1 items-center">
                     <div className="flex-grow border-t border-[var(--line)]"></div>
                     <span className="flex-shrink mx-2 text-[10px] font-extrabold uppercase tracking-wider text-[var(--muted)]">
-                      ou entre com e-mail corporativo
+                      {t('auth.orWithEmail')}
                     </span>
                     <div className="flex-grow border-t border-[var(--line)]"></div>
                   </div>
@@ -641,7 +677,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                   <form onSubmit={handleEmailLogin} className="space-y-3">
                     <div>
                       <label className="block text-[11px] font-bold text-[var(--ink)] uppercase tracking-wider mb-1">
-                        E-mail
+                        {t('auth.emailLabel')}
                       </label>
                       <div className="relative">
                         <Mail className="w-4 h-4 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
@@ -649,7 +685,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                           type="email"
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
-                          placeholder="seu.email@empresa.com"
+                          placeholder={t('auth.emailPlaceholder')}
                           required
                           className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-[var(--ink)] placeholder:text-[var(--muted)]/60 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                         />
@@ -659,7 +695,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="text-[11px] font-bold text-[var(--ink)] uppercase tracking-wider">
-                          Senha
+                          {t('auth.passwordLabel')}
                         </label>
                         <button
                           type="button"
@@ -669,7 +705,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                           }}
                           className="text-[10.5px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
                         >
-                          Esqueci minha senha
+                          {t('auth.forgotPassword')}
                         </button>
                       </div>
                       <div className="relative">
@@ -678,7 +714,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                           type="password"
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
-                          placeholder="••••••••"
+                          placeholder={t('auth.passwordPlaceholder')}
                           required
                           className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-[var(--ink)] placeholder:text-[var(--muted)]/60 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                         />
@@ -694,7 +730,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                         <RefreshCw className="w-4 h-4 animate-spin" />
                       ) : (
                         <>
-                          <span>Acessar Plataforma</span>
+                          <span>{t('auth.accessPlatform')}</span>
                           <ArrowRight className="w-4 h-4" />
                         </>
                       )}
@@ -708,7 +744,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                       onClick={() => setMode('signup_company')}
                       className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
                     >
-                      + Cadastrar Nova Empresa ou Filial
+                      {t('auth.registerNewCompany')}
                     </button>
                   </div>
                 </div>
@@ -720,7 +756,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                   <div className="flex items-center justify-between pb-1">
                     <div className="text-xs font-black text-[var(--ink)] flex items-center gap-1.5">
                       <KeyRound className="w-4 h-4 text-indigo-500" />
-                      Recuperação de Senha
+                      {t('auth.resetPasswordTitle')}
                     </div>
                     <button
                       type="button"
@@ -731,17 +767,17 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                       className="text-[11px] text-[var(--muted)] hover:text-[var(--ink)] font-bold flex items-center gap-1 cursor-pointer"
                     >
                       <ArrowLeft className="w-3.5 h-3.5" />
-                      Voltar
+                      {t('common.back')}
                     </button>
                   </div>
 
                   <p className="text-[11px] text-[var(--muted)] font-medium leading-relaxed">
-                    Informe seu e-mail corporativo. Enviaremos um link seguro para cadastrar uma nova senha.
+                    {t('auth.resetPasswordDesc')}
                   </p>
 
                   <div>
                     <label className="block text-[11px] font-bold text-[var(--ink)] uppercase tracking-wider mb-1">
-                      E-mail
+                      {t('auth.emailLabel')}
                     </label>
                     <div className="relative">
                       <Mail className="w-4 h-4 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
@@ -749,7 +785,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        placeholder="seu.email@empresa.com"
+                        placeholder={t('auth.emailPlaceholder')}
                         required
                         className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-[var(--ink)] placeholder:text-[var(--muted)]/60 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                       />
@@ -764,7 +800,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                     {isLoading ? (
                       <RefreshCw className="w-4 h-4 animate-spin" />
                     ) : (
-                      <span>Enviar Link de Redefinição</span>
+                      <span>{t('auth.sendResetLink')}</span>
                     )}
                   </button>
                 </form>
@@ -779,10 +815,10 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                         <PlugZap className="w-6 h-6 text-amber-500" />
                       </div>
                       <p className="text-xs font-bold text-[var(--ink)]">
-                        Nenhum colaborador cadastrado na escala local
+                        {t('auth.noCollaborators')}
                       </p>
                       <p className="text-[11px] text-[var(--muted)] font-semibold">
-                        Use a aba <strong>Nova Empresa</strong> acima para iniciar seu ambiente em nuvem.
+                        {t('auth.noCollaboratorsSub')}
                       </p>
                     </div>
                   ) : (
@@ -791,7 +827,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                       {availableSectors.length > 1 && !selectedId && (
                         <div>
                           <label className="block text-[10px] font-black text-[var(--muted)] uppercase tracking-wider mb-1.5">
-                            Filtrar por Setor
+                            {t('auth.filterBySector')}
                           </label>
                           <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
                             <button
@@ -803,7 +839,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                                   : 'bg-[var(--bg)] border border-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)]'
                               }`}
                             >
-                              Todos
+                              {t('common.all')}
                             </button>
                             {availableSectors.map((sec) => (
                               <button
@@ -826,7 +862,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                       {/* Search */}
                       <div>
                         <label className="block text-[10px] font-black text-[var(--muted)] uppercase tracking-wider mb-1.5">
-                          Buscar Colaborador
+                          {t('auth.searchCollaborator')}
                         </label>
                         <div className="relative">
                           <Search className="w-4 h-4 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
@@ -838,7 +874,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                               setRosterPassword('');
                               setError(null);
                             }}
-                            placeholder="Nome, RE ou login..."
+                            placeholder={t('auth.searchCollaborator')}
                             className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-[var(--ink)] placeholder:text-[var(--muted)]/70 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
                           />
                         </div>
@@ -849,7 +885,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                         <div className="max-h-48 overflow-y-auto border border-[var(--line)] rounded-xl divide-y divide-[var(--line)]">
                           {filteredCollaborators.length === 0 ? (
                             <div className="p-4 text-center text-xs text-[var(--muted)] font-semibold">
-                              Nenhum colaborador encontrado.
+                              {t('auth.noCollaboratorFound')}
                             </div>
                           ) : (
                             filteredCollaborators.map((c) => (
@@ -900,7 +936,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                               }}
                               className="text-[11px] font-bold text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 cursor-pointer"
                             >
-                              Trocar
+                              {t('auth.switchCollaborator')}
                             </button>
                           </div>
 
@@ -909,7 +945,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                               type="password"
                               value={rosterPassword}
                               onChange={(e) => setRosterPassword(e.target.value)}
-                              placeholder="Digite sua senha"
+                              placeholder={t('auth.enterPasswordPlaceholder')}
                               autoFocus
                               className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-xl px-3 py-2 text-xs font-medium text-[var(--ink)] placeholder:text-[var(--muted)]/70 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
                             />
@@ -919,7 +955,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
                             type="submit"
                             className="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-colors"
                           >
-                            Entrar na Escala
+                            {t('auth.enterRosterBtn')}
                             <ArrowRight className="w-4 h-4" />
                           </button>
                         </form>
@@ -934,14 +970,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
             <div className="px-6 py-3 bg-[var(--bg)]/40 border-t border-[var(--line)] flex items-center justify-between text-[11px] text-[var(--muted)]">
               <span className="flex items-center gap-1.5 font-medium">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                Nuvem Dimensio Ativa
+                {t('auth.cloudActive')}
               </span>
               <button
                 type="button"
                 onClick={handleGuestAccess}
                 className="font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
               >
-                Acessar sem login →
+                {t('auth.accessAsGuest')}
               </button>
             </div>
           </div>
@@ -950,7 +986,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
 
       {/* Footer */}
       <footer className="border-t border-[var(--line)] bg-[var(--paper)] py-4 px-4 sm:px-8 text-center text-xs text-[var(--muted)] font-medium">
-        Dimensio — Plataforma Integrada de Dimensionamento, Escalas e Comunicação Operacional.
+        {t('auth.footerText')}
       </footer>
     </div>
   );

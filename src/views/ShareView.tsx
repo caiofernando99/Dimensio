@@ -58,16 +58,16 @@ import {
   FolderTree,
 } from 'lucide-react';
 import {
-  matchesSearch,
-  isScaleOff,
   formatDateBR,
   formatDateLongBR,
   abbreviateName,
   getCollaboratorStatus,
 } from '../utils/helpers';
+import { filterDeskCollaborators, filterPresentCollaborators } from '../utils/presenceFilters';
 import { getConsolidatedTaskGroups, ConsolidatedTaskGroup } from '../utils/taskTreeHelpers';
 import { Collaborator } from '../types';
 import { MarkdownContent } from '../components/MarkdownContent';
+import { useI18n } from '../i18n';
 
 interface ShareViewProps {
   onNavigate?: (view: string) => void;
@@ -163,6 +163,7 @@ const shareThemeColors: Record<string, { bg: string; text: string; mutedText: st
 };
 
 export const ShareView: React.FC<ShareViewProps> = () => {
+  const { t } = useI18n();
   const {
     state,
     saveHistory,
@@ -386,27 +387,22 @@ export const ShareView: React.FC<ShareViewProps> = () => {
 
   const activeShift = state.selectedShiftFilter || state.teamShift || 'ALL';
 
-  // Filter present people
-  const presentPeople = state.collaborators.filter((c) => {
-    const colShift = c.shift || 'Geral';
-    if (selectedShifts.length > 0 && !selectedShifts.includes(colShift)) return false;
-    if (selectedShifts.length === 0 && activeShift !== 'ALL' && activeShift !== 'todos' && colShift !== activeShift) return false;
-
-    const hasAbsence = (c.absences || []).some((a) => activeDate >= a.startDate && activeDate <= a.endDate);
-    if (hasAbsence) return false;
-    const off = isScaleOff(state.calendar, activeDate, c.scale);
-    if (off) return false;
-    const manual = state.attendance[activeDate]?.[c.id];
-    if (manual === false) return false;
-
-    // Apply filters (array-based multi-select)
-    if (selectedCategories.length > 0 && !selectedCategories.includes(c.category || 'Geral')) return false;
-    if (selectedRoles.length > 0 && !selectedRoles.includes(c.role || 'Operador')) return false;
-    if (selectedTLs.length > 0 && !selectedTLs.includes(c.teamLeader || state.defaultTeamLeader || 'Sem Time')) return false;
-    if (searchTerm && !matchesSearch(c.name, searchTerm)) return false;
-
-    return true;
-  });
+  // Filtros de mesa + presença (fonte única em presenceFilters:
+  // sentinelas 'Todos' não filtram; status via getCollaboratorStatus,
+  // que entende folga, atestado em objeto e presença extra).
+  const deskOpts = {
+    shifts: selectedShifts,
+    categories: selectedCategories,
+    roles: selectedRoles,
+    tls: selectedTLs,
+    search: searchTerm,
+    activeShift,
+    defaultTL: state.defaultTeamLeader,
+  };
+  // Total no mesmo recorte dos filtros (sem presença) — base do "X / Y".
+  const deskPeople = filterDeskCollaborators(state.collaborators, deskOpts);
+  // Presentes de verdade no dia.
+  const presentPeople = filterPresentCollaborators(state.collaborators, activeDate, state, deskOpts);
 
   const getBreakTime = (personId: string) => {
     const slot = (state.breaks || []).find((b) => (dayIntervals[b.id] || []).includes(personId));
@@ -626,13 +622,9 @@ export const ShareView: React.FC<ShareViewProps> = () => {
       <div className="no-print space-y-4">
         <PageHeader
           icon={viewMode === 'export' ? Smartphone : Tv}
-          title="Resumo para Compartilhar & Escala"
-          subtitle={
-            viewMode === 'export'
-              ? 'Resumo operacional para exportação mobile e impressão'
-              : 'Apresentação operacional 16:9 para TV'
-          }
-          meta={<Badge tone="success" dot>{presentPeople.length} Presentes</Badge>}
+          title={t('share.title')}
+          subtitle={t('share.subtitle')}
+          meta={<Badge tone="success" dot>{presentPeople.length} {t('presence.presentTab')}</Badge>}
           actions={
             <>
               <Tabs
@@ -644,10 +636,10 @@ export const ShareView: React.FC<ShareViewProps> = () => {
                 onChange={(v) => setViewMode(v as 'export' | 'quick')}
               />
               <Button variant="outline" size="sm" icon={Printer} onClick={handlePrint}>
-                Imprimir / PDF
+                {t('common.print')} / PDF
               </Button>
               <Button variant="secondary" size="sm" icon={History} onClick={saveHistory}>
-                Salvar Histórico
+                {t('common.save')} {t('common.notes')}
               </Button>
               {viewMode === 'export' ? (
                 <>
@@ -658,7 +650,7 @@ export const ShareView: React.FC<ShareViewProps> = () => {
                     disabled={isGeneratingImage}
                     onClick={handleDownloadImage}
                   >
-                    {isGeneratingImage ? 'Gerando...' : 'Baixar PNG'}
+                    {isGeneratingImage ? t('common.loading') : `${t('common.download')} PNG`}
                   </Button>
                   <Button
                     variant="secondary"
@@ -1718,7 +1710,7 @@ export const ShareView: React.FC<ShareViewProps> = () => {
               </div>
               <div className="text-right">
                 <span className="px-3 py-1 bg-slate-100 border border-slate-300 rounded-lg text-xs font-black text-slate-800">
-                  {presentPeople.length} Presentes / {state.collaborators.length} Total
+                  {presentPeople.length} Presentes / {deskPeople.length} Total
                 </span>
               </div>
             </div>

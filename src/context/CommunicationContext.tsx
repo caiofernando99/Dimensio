@@ -103,8 +103,8 @@ function buildRtcConfig(customTurn: string | undefined): RTCConfiguration {
   return { iceServers, iceCandidatePoolSize: 10 };
 }
 
-const POLL_MS = 1000;
-const HEARTBEAT_MS = 3000;
+const POLL_MS = 2500;
+const HEARTBEAT_MS = 8000;
 const PEER_TTL_MS = 120000;
 const SEEN_PRUNE = 4000;
 const RETRY_INTERVAL_MS = 4000;
@@ -1625,6 +1625,14 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         if (enabledRef.current && liveAudioElRef.current?.paused) {
           liveAudioElRef.current.play().catch(() => {});
         }
+      } else if (data.type === 'keepalive-ping') {
+        // Worker não é estrangulado em 2º plano: usa o tick para manter
+        // o Modo de Mídia (MediaSession + AudioContext) vivo.
+        void import('../utils/mediaKeepalive').then((m) => {
+          try {
+            m.mediaKeepalive.pokeFromWorker();
+          } catch {}
+        }).catch(() => {});
       }
     };
 

@@ -58,7 +58,7 @@ export const UIProvider: React.FC<{ children: React.ReactNode; theme: ThemeOptio
         const currentTheme: ThemeOption = validThemes.includes(parsed.theme) ? parsed.theme : 'dimensio';
         return {
           theme: currentTheme,
-          isSidebarCollapsed: parsed.isSidebarCollapsed,
+          isSidebarCollapsed: parsed.isSidebarCollapsed ?? true,
           showBriefingSlide: parsed.showBriefingSlide !== false,
           showEmployeePortal: parsed.showEmployeePortal !== false,
           showOperatorPortal: parsed.showOperatorPortal !== false,
@@ -78,7 +78,7 @@ export const UIProvider: React.FC<{ children: React.ReactNode; theme: ThemeOptio
     }
     return {
       theme,
-      isSidebarCollapsed: false,
+      isSidebarCollapsed: true,
       showBriefingSlide: true,
       showEmployeePortal: true,
       showOperatorPortal: true,

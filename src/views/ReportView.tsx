@@ -42,6 +42,7 @@ import { CsvExportModal } from '../components/CsvExportModal';
 import { ShiftClosingModal } from '../components/ShiftClosingModal';
 import { ReportAttachedTaskMetrics } from '../components/ReportAttachedTaskMetrics';
 import { ReportDataAnalytics } from '../components/ReportDataAnalytics';
+import { useI18n } from '../i18n';
 import {
   PageHeader,
   Card,
@@ -61,6 +62,7 @@ import {
 } from '../components/ui';
 
 export const ReportView: React.FC = () => {
+  const { t } = useI18n();
   const {
     state,
     setAbsenceReason,
@@ -405,8 +407,8 @@ export const ReportView: React.FC = () => {
     <div className="space-y-5 animate-in fade-in duration-200">
       <PageHeader
         icon={BarChart3}
-        title={`Relatório Diário — ${formatDateLongBR(activeDate)}`}
-        subtitle="Passagem de turno consolidada, ocorrências integradas, métricas anexadas e central de análise de dados."
+        title={`${t('reports.title')} — ${formatDateLongBR(activeDate)}`}
+        subtitle={t('reports.subtitle')}
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -415,18 +417,18 @@ export const ReportView: React.FC = () => {
               icon={Lock}
               className="border-amber-500/50 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 font-black"
               onClick={() => setIsShiftClosingOpen(true)}
-              title="Realizar o fechamento e gravação imutável do turno na nuvem"
+              title={t('reports.shiftClosing')}
             >
-              Fechar Turno (Nuvem)
+              {t('reports.shiftClosing')}
             </Button>
             <Button variant="outline" size="sm" icon={Download} onClick={() => setCsvOpen(true)}>
-              CSV
+              {t('reports.exportCsv')}
             </Button>
             <Button variant="outline" size="sm" icon={Download} onClick={handleDownloadReport}>
               JSON
             </Button>
             <Button variant="primary" size="sm" icon={Save} onClick={handleSaveReport}>
-              Salvar Relatório
+              {t('common.save')}
             </Button>
           </div>
         }
@@ -444,8 +446,8 @@ export const ReportView: React.FC = () => {
         value={reportTab}
         onChange={(v) => setReportTab(v as 'inicio_turno' | 'analise_dados')}
         items={[
-          { value: 'inicio_turno', label: 'Início / Passagem de Turno', icon: Users },
-          { value: 'analise_dados', label: 'Análise de Dados', icon: BarChart3 },
+          { value: 'inicio_turno', label: t('reports.tabOverview'), icon: Users },
+          { value: 'analise_dados', label: t('reports.tabProductivity'), icon: BarChart3 },
         ]}
       />
 

@@ -1,6 +1,8 @@
 import { AppState, Collaborator, Task, BreakSlot, DailyReport, ScheduledAbsence, ShiftCustomConfig, SupportTypePreset } from '../types';
 import { DEFAULT_SUPPORT_TYPES, DEFAULT_FIRESTORE_CONFIG } from './initialData';
 import { DEFAULT_SAMPLE_TASKS, DEFAULT_TASK_LISTS } from './routineHelpers';
+import { normalizeDeck, defaultDeck } from '../briefing/deck';
+import { FILTER_ALL_SENTINELS } from './presenceFilters';
 
 /**
  * Universal initial default state for Dimensio
@@ -39,7 +41,8 @@ export const initialAppStateDefaults: AppState = {
   history: [],
   dailyReports: {},
   onlineSpreadsheet: DEFAULT_FIRESTORE_CONFIG,
-  isSidebarCollapsed: false,
+  briefDeck: defaultDeck(),
+  isSidebarCollapsed: true,
   showBriefingSlide: true,
   showEmployeePortal: true,
   showOperatorPortal: true,
@@ -405,7 +408,51 @@ export function normalizeAppState(rawInput: any, baseState?: AppState): AppState
     year: Number(src.year) || defaults.year,
     selectedDate: String(src.selectedDate || defaults.selectedDate),
     theme: src.theme || defaults.theme,
-    calendar: typeof src.calendar === 'object' && src.calendar ? src.calendar : {},
+    calendar: (() => {
+      const raw = typeof src.calendar === 'object' && src.calendar ? src.calendar : {};
+      const out: Record<string, string | string[] | import('../types').CalendarDay> = {};
+      Object.entries(raw).forEach(([k, v]: [string, any]) => {
+        if (typeof v === 'string') {
+          out[k] = v ? { offGroups: [v] } : { offGroups: [] };
+        } else if (Array.isArray(v)) {
+          out[k] = { offGroups: v.map(String).filter(Boolean) };
+        } else if (v && typeof v === 'object') {
+          const off = Array.isArray((v as any).offGroups)
+            ? (v as any).offGroups.map(String).filter(Boolean)
+            : [];
+          out[k] = {
+            offGroups: off,
+            holidayTitle: typeof (v as any).holidayTitle === 'string' ? (v as any).holidayTitle : undefined,
+            isHoliday: Boolean((v as any).isHoliday || (v as any).holidayTitle),
+            allowWorkOnHoliday: (v as any).allowWorkOnHoliday !== false,
+            notes: typeof (v as any).notes === 'string' ? (v as any).notes : undefined,
+          };
+        }
+      });
+      return out;
+    })(),
+    scaleGroupDefs: Array.isArray(src.scaleGroupDefs)
+      ? src.scaleGroupDefs.filter((d: any) => d && d.name).map((d: any) => ({ id: String(d.id || d.name), name: String(d.name), color: d.color ? String(d.color) : undefined }))
+      : (Array.isArray(baseState?.scaleGroupDefs) ? baseState.scaleGroupDefs : []),
+    calendarEvents: (() => {
+      const raw = typeof src.calendarEvents === 'object' && src.calendarEvents ? src.calendarEvents : {};
+      const out: Record<string, import('../types').CalendarEventEntry[]> = {};
+      Object.entries(raw).forEach(([k, v]: [string, any]) => {
+        if (Array.isArray(v)) {
+          out[k] = v.filter((e: any) => e && (e.title || e.id)).map((e: any, i: number) => ({
+            id: String(e.id || `${k}_${i}`),
+            date: String(e.date || k),
+            title: String(e.title || 'Evento'),
+            type: ['feriado', 'evento', 'folga', 'nota'].includes(e.type) ? e.type : 'evento',
+            startTime: e.startTime ? String(e.startTime) : undefined,
+            endTime: e.endTime ? String(e.endTime) : undefined,
+            notes: e.notes ? String(e.notes) : undefined,
+            allowWork: e.allowWork !== false,
+          }));
+        }
+      });
+      return out;
+    })(),
     collaborators: sanitizedCollaborators,
     deletedCollaborators: Array.isArray(src.deletedCollaborators) ? src.deletedCollaborators : [],
     tempNotes: typeof src.tempNotes === 'object' && src.tempNotes ? src.tempNotes : {},
@@ -478,6 +525,7 @@ export function normalizeAppState(rawInput: any, baseState?: AppState): AppState
     feedbackConfig: (typeof src.feedbackConfig === 'object' && src.feedbackConfig)
       ? { ...(baseState?.feedbackConfig || {}), ...src.feedbackConfig }
       : (baseState?.feedbackConfig || {}),
+    briefDeck: normalizeDeck(src.briefDeck) || normalizeDeck(baseState?.briefDeck) || defaultDeck(),
     editorRoles: Array.isArray(src.editorRoles) && src.editorRoles.length > 0
       ? src.editorRoles.map(String)
       : (baseState?.editorRoles || defaults.editorRoles),
@@ -497,6 +545,24 @@ export function normalizeAppState(rawInput: any, baseState?: AppState): AppState
     infoHubReminders: Array.isArray(src.infoHubReminders) ? src.infoHubReminders : [],
     infoHubLinks: Array.isArray(src.infoHubLinks) ? src.infoHubLinks : [],
     infoHubQuickFills: Array.isArray(src.infoHubQuickFills) ? src.infoHubQuickFills : [],
+    companyManagers: Array.isArray(src.companyManagers)
+      ? src.companyManagers
+        .filter((m: any) => m && typeof m === 'object' && (m.id || m.name))
+        .map((m: any) => ({
+          id: String(m.id || `mgr_${Math.random().toString(36).slice(2, 8)}`),
+          name: String(m.name || 'Gestor'),
+          email: m.email ? String(m.email) : undefined,
+          firebaseUid: m.firebaseUid ? String(m.firebaseUid) : undefined,
+          collaboratorId: m.collaboratorId ? String(m.collaboratorId) : undefined,
+          role: m.role === 'admin' ? 'admin' : 'owner',
+          status: m.status === 'revoked' ? 'revoked' : 'active',
+          addedByName: m.addedByName ? String(m.addedByName) : undefined,
+          createdAt: m.createdAt ? String(m.createdAt) : new Date().toISOString(),
+          revokedAt: m.revokedAt ? String(m.revokedAt) : undefined,
+          revokedByName: m.revokedByName ? String(m.revokedByName) : undefined,
+          notes: m.notes ? String(m.notes) : undefined,
+        }))
+      : (Array.isArray(baseState?.companyManagers) ? baseState.companyManagers : []),
     metricDefinitions: Array.isArray(src.metricDefinitions)
       ? src.metricDefinitions.filter((d: any) => d && typeof d === 'object' && d.id && d.name)
       : (baseState?.metricDefinitions || []),
@@ -553,9 +619,23 @@ export function normalizeAppState(rawInput: any, baseState?: AppState): AppState
     shareCustomConfig: (typeof src.shareCustomConfig === 'object' && src.shareCustomConfig)
       ? { ...(baseState?.shareCustomConfig || defaults.shareCustomConfig || {}), ...src.shareCustomConfig }
       : (baseState?.shareCustomConfig || defaults.shareCustomConfig || {}),
-    shareFilters: (typeof src.shareFilters === 'object' && src.shareFilters)
-      ? { ...(baseState?.shareFilters || defaults.shareFilters || {}), ...src.shareFilters }
-      : (baseState?.shareFilters || defaults.shareFilters || {}),
+    shareFilters: (() => {
+      // Migração: sentinelas antigas ('Todos'/'Todas') viram lista vazia
+      // (sem filtro). Sem isso, filtros salvos zeravam o resumo.
+      const clean = (v: unknown): string[] =>
+        Array.isArray(v) ? v.map(String).filter((s) => !FILTER_ALL_SENTINELS.includes(s)) : [];
+      const base = baseState?.shareFilters || defaults.shareFilters || ({} as any);
+      const srcF = (typeof src.shareFilters === 'object' && src.shareFilters ? src.shareFilters : {}) as any;
+      return {
+        ...base,
+        ...srcF,
+        selectedShifts: clean(srcF.selectedShifts ?? base.selectedShifts),
+        selectedCategories: clean(srcF.selectedCategories ?? base.selectedCategories),
+        selectedRoles: clean(srcF.selectedRoles ?? base.selectedRoles),
+        selectedTLs: clean(srcF.selectedTLs ?? base.selectedTLs),
+        searchTerm: typeof srcF.searchTerm === 'string' ? srcF.searchTerm : base.searchTerm || '',
+      };
+    })(),
     reportExportConfig: (typeof src.reportExportConfig === 'object' && src.reportExportConfig)
       ? { ...(baseState?.reportExportConfig || defaults.reportExportConfig || {}), ...src.reportExportConfig }
       : (baseState?.reportExportConfig || defaults.reportExportConfig || {}),

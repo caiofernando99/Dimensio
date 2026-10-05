@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-const ShiftGroupSchema = z.enum(['A', 'B', 'C', 'D']);
+const ShiftGroupSchema = z.string().min(1);
+const CalendarDaySchema = z.object({
+  offGroups: z.array(z.string()).default([]),
+  holidayTitle: z.string().optional(),
+  isHoliday: z.boolean().optional(),
+  allowWorkOnHoliday: z.boolean().optional(),
+  notes: z.string().optional(),
+});
 const ThemeOptionSchema = z.enum([
   'dimensio',
   'aurora',
@@ -227,6 +234,21 @@ export const DailyReportSchema = z.object({
   })).optional(),
 });
 
+export const CompanyManagerSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().optional(),
+  firebaseUid: z.string().optional(),
+  collaboratorId: z.string().optional(),
+  role: z.enum(['owner', 'admin']),
+  status: z.enum(['active', 'revoked']),
+  addedByName: z.string().optional(),
+  createdAt: z.string(),
+  revokedAt: z.string().optional(),
+  revokedByName: z.string().optional(),
+  notes: z.string().optional(),
+});
+
 export const AppStateSchema = z.object({
   updatedAtMs: z.number().optional(),
   location: z.string(),
@@ -237,6 +259,7 @@ export const AppStateSchema = z.object({
   shifts: z.array(z.string()),
   scaleType: z.enum(['6x2', 'custom']),
   scaleGroups: z.array(z.string()),
+  companyManagers: z.array(CompanyManagerSchema).optional(),
   setupCompleted: z.boolean().optional(),
   isSampleData: z.boolean().optional(),
   defaultTeamLeader: z.string().optional(),
@@ -248,7 +271,18 @@ export const AppStateSchema = z.object({
   year: z.number(),
   selectedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   theme: ThemeOptionSchema,
-  calendar: z.record(z.string(), z.string()),
+  calendar: z.record(z.string(), z.union([z.string(), z.array(z.string()), CalendarDaySchema])),
+  scaleGroupDefs: z.array(z.object({ id: z.string(), name: z.string(), color: z.string().optional() })).optional(),
+  calendarEvents: z.record(z.string(), z.array(z.object({
+    id: z.string(),
+    date: z.string(),
+    title: z.string(),
+    type: z.enum(['feriado', 'evento', 'folga', 'nota']).optional(),
+    startTime: z.string().optional(),
+    endTime: z.string().optional(),
+    notes: z.string().optional(),
+    allowWork: z.boolean().optional(),
+  }))).optional(),
   collaborators: z.array(CollaboratorSchema),
   deletedCollaborators: z.array(z.object({
     id: z.string(),
@@ -291,6 +325,33 @@ export const AppStateSchema = z.object({
   selectedShiftFilter: z.string().optional(),
   selectedTLFilter: z.string().optional(),
   absenteeismPeriodDays: z.number().optional(),
+  briefDeck: z.object({
+    version: z.literal(1).optional(),
+    slides: z.array(z.object({
+      id: z.string(),
+      kind: z.enum(['cover', 'scale', 'embed', 'process', 'qa', 'notice', 'blank']),
+      title: z.string(),
+      enabled: z.boolean(),
+      theme: z.object({
+        bg: z.string(),
+        bgImage: z.string().optional(),
+        accent: z.string(),
+      }),
+      hiddenSections: z.array(z.string()),
+      data: z.record(z.string(), z.any()),
+      layers: z.array(z.object({
+        id: z.string(),
+        type: z.enum(['text', 'image', 'shape']),
+        content: z.string(),
+        x: z.number(),
+        y: z.number(),
+        w: z.number(),
+        h: z.number(),
+        z: z.number(),
+      }).passthrough()),
+    })),
+    updatedAt: z.string().optional(),
+  }).passthrough().optional(),
   briefingConfig: z.object({
     coverBgUrl: z.string().optional(),
     coverTitle: z.string().optional(),

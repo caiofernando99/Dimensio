@@ -17,7 +17,7 @@ export const DEFAULT_SAMPLE_TASKS: ScheduledTask[] = [];
 export function isTaskDueOnDate(
   task: ScheduledTask,
   dateStr: string,
-  calendarScaleState?: Record<string, string>
+  calendarScaleState?: Record<string, string | string[] | import('../types').CalendarDay>
 ): boolean {
   if (!dateStr) return false;
 
@@ -88,11 +88,18 @@ export function isTaskDueOnDate(
         return false;
 
       case 'shift_scale':
-        // Checks if scale group or shift is active on this day
+        // Checks if scale group or shift is active on this day (multi-folga).
         if (rec.scaleGroups && rec.scaleGroups.length > 0 && calendarScaleState) {
-          const offGroup = calendarScaleState[dateStr];
+          const raw: unknown = calendarScaleState[dateStr];
+          const offGroups: string[] = Array.isArray(raw)
+            ? (raw as unknown[]).map(String)
+            : typeof raw === 'string'
+              ? (raw ? [raw] : [])
+              : Array.isArray((raw as any)?.offGroups)
+                ? (raw as any).offGroups.map(String)
+                : [];
           // If group is NOT on off, it is working
-          return rec.scaleGroups.some((g) => g !== offGroup);
+          return rec.scaleGroups.some((g) => !offGroups.includes(g));
         }
         return true;
 
@@ -110,7 +117,7 @@ export function isTaskDueOnDate(
 export function getTasksForDate(
   tasks: ScheduledTask[],
   dateStr: string,
-  calendarScaleState?: Record<string, string>,
+  calendarScaleState?: Record<string, string | string[] | import('../types').CalendarDay>,
   filterUserId?: string
 ): ScheduledTask[] {
   if (!tasks || !Array.isArray(tasks)) return [];

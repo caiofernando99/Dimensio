@@ -1,7 +1,10 @@
 export { APP_VERSION, BUILD_TS as APP_BUILD_DATE, BUILD_TS, GIT_COMMIT, GIT_BRANCH, FULL_VERSION, APPS_SCRIPT_VERSION, WEBHOOK_SCRIPT_VERSION } from './version';
 
+// Legado: exemplo inicial de turmas. NÃO é mais um esquema fixo — o usuário
+// define suas próprias turmas (state.scaleGroups). Mantido apenas como
+// fallback para instalações antigas.
 export const SHIFT_GROUPS = ['A', 'B', 'C', 'D'] as const;
-export type ShiftGroup = typeof SHIFT_GROUPS[number];
+export type ShiftGroup = string;
 
 export const TEAM_SHIFTS = ['T1', 'T2', 'T3', 'T4', 'T5', 'Manhã', 'Tarde', 'Noite', 'Geral'] as const;
 export type TeamShift = typeof TEAM_SHIFTS[number];

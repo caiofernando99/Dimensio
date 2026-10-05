@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { requestNotificationPermission } from '../utils/notifications';
-import { matchesCollaboratorSearch } from '../utils/helpers';
+import { matchesCollaboratorSearch, scoreCollaboratorSearch } from '../utils/helpers';
 import { Collaborator } from '../types';
 import {
   UserCheck,
@@ -182,14 +182,20 @@ export const UserIdentifyModal: React.FC<UserIdentifyModalProps> = ({
       matchesCollaboratorSearch(p, raw, { defaultTeamLeader: state.defaultTeamLeader })
     );
 
+    // Relevância primeiro: nome próprio acima de time/líder (ex: "matheus"
+    // mostra os Matheus antes dos 60+ liderados por um Matheus).
+    const byScore = (a: IdentifiableProfile, b: IdentifiableProfile) =>
+      scoreCollaboratorSearch(b, raw, { defaultTeamLeader: state.defaultTeamLeader }) -
+      scoreCollaboratorSearch(a, raw, { defaultTeamLeader: state.defaultTeamLeader });
+
     // If shiftFilter is 'todos', return all search matches
     if (shiftFilter === 'todos') {
-      return searchMatches;
+      return [...searchMatches].sort(byScore);
     }
 
     // If user selected a specific filter tab, prioritize items in this filter and append others below
-    const inFilterMatches = searchMatches.filter(matchesFilter);
-    const outOfFilterMatches = searchMatches.filter((p) => !matchesFilter(p));
+    const inFilterMatches = searchMatches.filter(matchesFilter).sort(byScore);
+    const outOfFilterMatches = searchMatches.filter((p) => !matchesFilter(p)).sort(byScore);
 
     return [...inFilterMatches, ...outOfFilterMatches];
   }, [allProfiles, searchQuery, shiftFilter, state.defaultTeamLeader]);

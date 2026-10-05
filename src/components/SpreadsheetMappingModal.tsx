@@ -615,10 +615,10 @@ export const SpreadsheetMappingModal: React.FC<SpreadsheetMappingModalProps> = (
                     </div>
                   </div>
 
-                  {/* Escala (6x2) */}
+                  {/* Turma / Escala */}
                   <div className="p-3 bg-[var(--paper)] border border-[var(--line)] rounded-xl space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <label className="font-extrabold text-[var(--ink)]">Turma / Escala 6x2 (A, B, C, D)</label>
+                      <label className="font-extrabold text-[var(--ink)]">Turma / Escala</label>
                       <span className="text-[10px] text-[var(--muted)]">Coluna ou Fixo</span>
                     </div>
                     <div className="flex gap-2">
@@ -626,7 +626,7 @@ export const SpreadsheetMappingModal: React.FC<SpreadsheetMappingModalProps> = (
                         value={colMap.scale.startsWith('FIXED:') ? 'FIXED' : colMap.scale}
                         onChange={(e) => {
                           if (e.target.value === 'FIXED') {
-                            handleFixedValueChange('scale', fixedValues.scale || 'A');
+                            handleFixedValueChange('scale', fixedValues.scale || '');
                           } else {
                             handleMappingChange('scale', e.target.value);
                           }
@@ -642,17 +642,12 @@ export const SpreadsheetMappingModal: React.FC<SpreadsheetMappingModalProps> = (
                       </select>
 
                       {colMap.scale.startsWith('FIXED:') && (
-                        <select
+                        <input
                           value={fixedValues.scale}
                           onChange={(e) => handleFixedValueChange('scale', e.target.value)}
-                          className="w-24 bg-[var(--bg)] border border-[var(--line)] text-xs font-bold rounded-lg px-2 py-2 text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
-                        >
-                          {['A', 'B', 'C', 'D'].map((grp) => (
-                            <option key={grp} value={grp}>
-                              Turma {grp}
-                            </option>
-                          ))}
-                        </select>
+                          placeholder="Turma (ex: Alfa)"
+                          className="w-32 bg-[var(--bg)] border border-[var(--line)] text-xs font-bold rounded-lg px-2 py-2 text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
+                        />
                       )}
                     </div>
                   </div>

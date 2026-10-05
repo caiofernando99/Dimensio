@@ -36,7 +36,7 @@ const STEPS = [
 ];
 
 export const OnboardingSetupWizard: React.FC<OnboardingSetupWizardProps> = ({ isOpen, onClose }) => {
-  const { state, setTeamInfo, addTeamLeader, removeTeamLeader, addCatalogItem, removeCatalogItem, addTask, addBreakSlot, addCollaborator, deleteCollaborator, applySuggestedScaleCalendar, setSetupCompleted, showNotice } = useApp();
+  const { state, setTeamInfo, addTeamLeader, removeTeamLeader, addCatalogItem, removeCatalogItem, addTask, addBreakSlot, addCollaborator, deleteCollaborator, setSetupCompleted, showNotice } = useApp();
 
   const [step, setStep] = useState(0);
 
@@ -118,7 +118,7 @@ export const OnboardingSetupWizard: React.FC<OnboardingSetupWizardProps> = ({ is
   };
 
   const handleAddGroup = () => {
-    const v = groupInput.trim().toUpperCase();
+    const v = groupInput.trim();
     if (v && !scaleGroups.includes(v)) {
       setScaleGroups([...scaleGroups, v]);
       setGroupInput('');
@@ -185,7 +185,7 @@ export const OnboardingSetupWizard: React.FC<OnboardingSetupWizardProps> = ({ is
     addCollaborator({
       name,
       shift: newColShift || draftShifts[0] || 'Geral',
-      scale: newColScale || scaleGroups[0] || 'A',
+      scale: newColScale || scaleGroups[0] || '',
       teamLeader: newColTeam || state.teamLeaders?.[0] || state.defaultTeamLeader || undefined,
       role: newColRole || state.roles[0] || 'Operador',
       category: newColCategory || state.categories[0] || 'Inbound',
@@ -290,10 +290,10 @@ export const OnboardingSetupWizard: React.FC<OnboardingSetupWizardProps> = ({ is
               >
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className={`w-4 h-4 ${scaleType === '6x2' ? 'text-[var(--primary)]' : 'text-[var(--muted)]'}`} />
-                  <span className="text-xs font-black text-[var(--ink)]">Escala 6x2</span>
+                  <span className="text-xs font-black text-[var(--ink)]">Escala por turmas (ex: 6x2)</span>
                 </div>
                 <p className="text-[11px] text-[var(--muted)] mt-1 leading-relaxed">
-                  Ciclo de 6 dias trabalhados e 2 de folga. O aplicativo pode preencher o calendário automaticamente com a escala sugerida.
+                  Ciclo de dias trabalhados e folga por turma (ex: 6x2). Você monta o calendário marcando as folgas de cada turma.
                 </p>
               </button>
               <button
@@ -302,10 +302,10 @@ export const OnboardingSetupWizard: React.FC<OnboardingSetupWizardProps> = ({ is
               >
                 <div className="flex items-center gap-2">
                   <CalendarDays className={`w-4 h-4 ${scaleType === 'custom' ? 'text-[var(--primary)]' : 'text-[var(--muted)]'}`} />
-                  <span className="text-xs font-black text-[var(--ink)]">Outra Escala</span>
+                  <span className="text-xs font-black text-[var(--ink)]">Escala personalizada</span>
                 </div>
                 <p className="text-[11px] text-[var(--muted)] mt-1 leading-relaxed">
-                  Escalas 5x2, 4x2 ou customizadas. Você deverá preencher ou importar o calendário de folgas manualmente.
+                  Qualquer outro regime (5x2, 12x36, turnos fixos). Você monta o calendário marcando folgas, feriados e eventos.
                 </p>
               </button>
             </div>
@@ -323,35 +323,20 @@ export const OnboardingSetupWizard: React.FC<OnboardingSetupWizardProps> = ({ is
                 ))}
               </div>
               <div className="flex items-center gap-2">
-                <input value={groupInput} onChange={(e) => setGroupInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleAddGroup(); }} placeholder="Ex: A, B, C..." className={inputCls} />
+                <input value={groupInput} onChange={(e) => setGroupInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleAddGroup(); }} placeholder="Ex: Alfa, Noturna, 12x36 A..." className={inputCls} />
                 <button onClick={handleAddGroup} className={addBtnCls}>
                   <Plus className="w-3.5 h-3.5" /> Adicionar
                 </button>
               </div>
             </div>
 
-            {scaleType === '6x2' ? (
-              <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900">
-                <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <p className="text-[11px] text-emerald-900 dark:text-emerald-100 font-semibold flex-1">
-                  Ao concluir, o calendário de {state.year} será preenchido automaticamente com a escala 6x2 sugerida.
-                </p>
-                <button
-                  onClick={() => applySuggestedScaleCalendar(state.year)}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black rounded-lg cursor-pointer shrink-0"
-                >
-                  Aplicar agora
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900">
-                <Shield className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                <p className="text-[11px] text-amber-900 dark:text-amber-100 font-semibold leading-relaxed">
-                  Para escalas personalizadas, preencha ou importe o calendário de folgas na tela{' '}
-                  <span className="font-black">Calendário</span>. Sem o calendário preenchido, os colaboradores aparecerão como trabalhando todos os dias.
-                </p>
-              </div>
-            )}
+            <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900">
+              <Shield className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-amber-900 dark:text-amber-100 font-semibold leading-relaxed">
+                Após concluir, preencha ou importe o calendário de folgas na tela{' '}
+                <span className="font-black">Calendário</span> usando as turmas criadas acima. Sem o calendário preenchido, os colaboradores aparecerão como trabalhando todos os dias.
+              </p>
+            </div>
           </div>
         );
       case 3:
@@ -492,7 +477,7 @@ export const OnboardingSetupWizard: React.FC<OnboardingSetupWizardProps> = ({ is
                 ))}
               </select>
               <select value={newColScale} onChange={(e) => setNewColScale(e.target.value)} className={inputCls}>
-                <option value="">Escala: {scaleGroups[0] || 'A'}</option>
+                <option value="">Escala: {scaleGroups[0] || '—'}</option>
                 {scaleGroups.map((g) => (
                   <option key={g} value={g}>Turma {g}</option>
                 ))}

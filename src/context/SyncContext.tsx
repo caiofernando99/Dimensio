@@ -256,7 +256,7 @@ export const SyncProvider: React.FC<{ children: React.ReactNode; appState: AppSt
       const tlName = col.teamLeader || appState.defaultTeamLeader || 'Geral';
 
       let statusLabel = 'Presente';
-      if (st.status === 'folga') statusLabel = 'Folga (6x2)';
+      if (st.status === 'folga') statusLabel = 'Folga (escala)';
       else if (st.status === 'ferias') statusLabel = 'Férias';
       else if (st.status === 'licenca') statusLabel = 'Licença Médica';
       else if (st.status === 'treinamento') statusLabel = 'Treinamento';
