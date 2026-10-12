@@ -12,15 +12,116 @@ import {
   limit,
   Unsubscribe,
 } from 'firebase/firestore';
-import { db } from './firebase';
-import { AppState, ShiftClosingRecord } from '../types';
+import { db, auth } from './firebase';
+import { AppState, ShiftClosingRecord, FirestoreBackupRecord } from '../types';
 import { SignalMessage, CommPeerInfo } from '../communication/types';
 import { normalizeAppState } from '../utils/stateNormalizer';
+import { getTodayISO } from '../utils/helpers';
 
 const DEFAULT_COLLECTION = 'dimensio_workspaces';
 const DEFAULT_DOC_ID = 'main_roster_state';
 const HISTORY_COLLECTION = 'dimensio_shift_history';
 const PRESENCE_COLLECTION = 'dimensio_presence';
+const BACKUPS_COLLECTION = 'dimensio_backups';
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+const QUOTA_STORAGE_KEY = 'dimensio_firestore_quota_exceeded_until';
+
+export function isQuotaExceededError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const code = String((err as any)?.code || '').toLowerCase();
+  return (
+    code === 'resource-exhausted' ||
+    msg.includes('quota limit exceeded') ||
+    msg.includes('quota exceeded') ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('free daily read units') ||
+    msg.includes('free tier database')
+  );
+}
+
+export function isFirestoreQuotaExceeded(): boolean {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem(QUOTA_STORAGE_KEY) : null;
+    if (!raw) return false;
+    const until = Number(raw);
+    if (isNaN(until) || Date.now() >= until) {
+      if (typeof window !== 'undefined') localStorage.removeItem(QUOTA_STORAGE_KEY);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function markFirestoreQuotaExceeded(cooldownMs = 30 * 60 * 1000): void {
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(QUOTA_STORAGE_KEY, String(Date.now() + cooldownMs));
+    }
+  } catch {
+    // Ignore storage issues
+  }
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const currentUser = auth.currentUser;
+  const isQuota = isQuotaExceededError(error);
+  if (isQuota) {
+    markFirestoreQuotaExceeded();
+  }
+
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: currentUser?.uid,
+      email: currentUser?.email,
+      emailVerified: currentUser?.emailVerified,
+      isAnonymous: currentUser?.isAnonymous,
+      tenantId: currentUser?.tenantId,
+      providerInfo: currentUser?.providerData?.map((p) => ({
+        providerId: p.providerId,
+        email: p.email,
+      })) || [],
+    },
+    operationType,
+    path,
+  };
+
+  if (isQuota) {
+    console.warn('Firestore Quota Notice: Limite de leitura diária do plano gratuito atingido. Operando em modo offline.', JSON.stringify(errInfo));
+  } else {
+    console.warn('Firestore Warning: ', JSON.stringify(errInfo));
+  }
+  throw new Error(JSON.stringify(errInfo));
+}
 
 export interface FirestoreSyncStatus {
   connected: boolean;
@@ -44,7 +145,11 @@ export async function pushStateToFirestore(
   state: AppState,
   collectionName = DEFAULT_COLLECTION,
   docId = DEFAULT_DOC_ID
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; quotaExceeded?: boolean }> {
+  if (isFirestoreQuotaExceeded()) {
+    return { success: false, error: 'Limite diário gratuito do Firestore atingido', quotaExceeded: true };
+  }
+
   try {
     const docRef = doc(db, collectionName, docId);
     
@@ -85,6 +190,18 @@ export async function pushStateToFirestore(
       metricDefinitions: state.metricDefinitions || [],
       metricReadings: state.metricReadings || [],
       supportMessages: (state.supportMessages || []).slice(0, 100),
+      helpdeskConfig: state.helpdeskConfig || {},
+      portalConfig: state.portalConfig || {},
+      portalNotificationConfig: state.portalNotificationConfig || {},
+      shareCustomConfig: state.shareCustomConfig || {},
+      shareFilters: state.shareFilters || {},
+      widgetsConfig: state.widgetsConfig || {},
+      calendarEvents: state.calendarEvents || {},
+      roles: state.roles || [],
+      categories: state.categories || [],
+      skills: state.skills || [],
+      rolePermissions: state.rolePermissions || {},
+      theme: state.theme || 'dimensio',
       extensionConfig: state.extensionConfig || {},
       autoBackupSettings: state.autoBackupSettings || {},
       // Stringified safety snapshot
@@ -94,14 +211,22 @@ export async function pushStateToFirestore(
         breaks: state.breaks,
         dailyReports: state.dailyReports,
         scheduledTasks: state.scheduledTasks,
+        helpdeskConfig: state.helpdeskConfig,
       }),
       syncedAt: new Date().toISOString(),
     };
 
-    await setDoc(docRef, payload, { merge: true });
+    // Remove any undefined properties across nested objects before calling setDoc
+    const cleanPayload = JSON.parse(JSON.stringify(payload));
+    await setDoc(docRef, cleanPayload, { merge: true });
     return { success: true };
   } catch (err: any) {
-    console.error('Failed to push state to Firestore:', err);
+    if (isQuotaExceededError(err)) {
+      markFirestoreQuotaExceeded();
+      console.warn('Aviso de cota ao sincronizar estado com Firestore:', err?.message || err);
+      return { success: false, error: 'Limite diário gratuito do Firestore atingido', quotaExceeded: true };
+    }
+    console.warn('Falha ao sincronizar estado com o Firestore:', err);
     return { success: false, error: err?.message || 'Erro ao sincronizar com o Firestore' };
   }
 }
@@ -115,6 +240,12 @@ export function subscribeToFirestoreState(
   collectionName = DEFAULT_COLLECTION,
   docId = DEFAULT_DOC_ID
 ): Unsubscribe {
+  if (isFirestoreQuotaExceeded()) {
+    console.warn('[Firestore] Cota diária gratuita do Firestore atingida. Operando em modo local offline.');
+    onError({ code: 'resource-exhausted', message: 'Quota limit exceeded' });
+    return () => {};
+  }
+
   const docRef = doc(db, collectionName, docId);
 
   return onSnapshot(
@@ -130,7 +261,12 @@ export function subscribeToFirestoreState(
       onUpdate(data as Partial<AppState>, remoteUpdatedAtMs);
     },
     (err) => {
-      console.error('Firestore real-time subscription error:', err);
+      if (isQuotaExceededError(err)) {
+        markFirestoreQuotaExceeded();
+        console.warn('Firestore real-time subscription notice (limite diário gratuito atingido):', err?.message || err);
+      } else {
+        console.warn('Firestore real-time subscription notice:', err?.message || err);
+      }
       onError(err);
     }
   );
@@ -142,7 +278,12 @@ export function subscribeToFirestoreState(
 export async function fetchStateFromFirestoreOnce(
   collectionName = DEFAULT_COLLECTION,
   docId = DEFAULT_DOC_ID
-): Promise<{ state: Partial<AppState> | null; updatedAtMs: number }> {
+): Promise<{ state: Partial<AppState> | null; updatedAtMs: number; quotaExceeded?: boolean }> {
+  if (isFirestoreQuotaExceeded()) {
+    console.warn('[Firestore] Cota diária gratuita do Firestore atingida. Pulando leitura e mantendo estado local.');
+    return { state: null, updatedAtMs: 0, quotaExceeded: true };
+  }
+
   try {
     const docRef = doc(db, collectionName, docId);
     const snap = await getDoc(docRef);
@@ -154,8 +295,13 @@ export async function fetchStateFromFirestoreOnce(
       state: data as Partial<AppState>,
       updatedAtMs: Number(data?.updatedAtMs) || 0,
     };
-  } catch (err) {
-    console.error('Failed to fetch state from Firestore:', err);
+  } catch (err: any) {
+    if (isQuotaExceededError(err)) {
+      markFirestoreQuotaExceeded();
+      console.warn('Aviso de cota ao buscar estado do Firestore (limite diário atingido):', err?.message || err);
+      return { state: null, updatedAtMs: 0, quotaExceeded: true };
+    }
+    console.warn('Falha ao buscar estado do Firestore:', err?.message || err);
     return { state: null, updatedAtMs: 0 };
   }
 }
@@ -166,12 +312,21 @@ export async function fetchStateFromFirestoreOnce(
 export async function saveShiftClosingToFirestore(
   record: ShiftClosingRecord
 ): Promise<{ success: boolean; error?: string }> {
+  if (isFirestoreQuotaExceeded()) {
+    return { success: false, error: 'Limite diário gratuito do Firestore atingido' };
+  }
+
   try {
     const docRef = doc(db, HISTORY_COLLECTION, record.id);
     await setDoc(docRef, record);
     return { success: true };
   } catch (err: any) {
-    console.error('Failed to save shift closing to Firestore:', err);
+    if (isQuotaExceededError(err)) {
+      markFirestoreQuotaExceeded();
+      console.warn('Aviso de cota ao salvar fechamento de turno no Firestore:', err?.message || err);
+    } else {
+      console.warn('Falha ao salvar fechamento de turno no Firestore:', err);
+    }
     return { success: false, error: err?.message || 'Erro ao gravar fechamento de turno no Firestore' };
   }
 }
@@ -182,6 +337,10 @@ export async function saveShiftClosingToFirestore(
 export async function fetchShiftClosingsFromFirestore(
   maxRecords = 50
 ): Promise<ShiftClosingRecord[]> {
+  if (isFirestoreQuotaExceeded()) {
+    return [];
+  }
+
   try {
     const colRef = collection(db, HISTORY_COLLECTION);
     const q = query(colRef, orderBy('closedAt', 'desc'), limit(maxRecords));
@@ -194,8 +353,13 @@ export async function fetchShiftClosingsFromFirestore(
       }
     });
     return records;
-  } catch (err) {
-    console.warn('Failed to query shift closings from Firestore:', err);
+  } catch (err: any) {
+    if (isQuotaExceededError(err)) {
+      markFirestoreQuotaExceeded();
+      console.warn('Aviso de cota ao buscar fechamentos de turno:', err?.message || err);
+    } else {
+      console.warn('Failed to query shift closings from Firestore:', err);
+    }
     return [];
   }
 }
@@ -204,12 +368,21 @@ export async function fetchShiftClosingsFromFirestore(
  * Deletes a shift closing record from Firestore.
  */
 export async function deleteShiftClosingFromFirestore(id: string): Promise<boolean> {
+  if (isFirestoreQuotaExceeded()) {
+    return false;
+  }
+
   try {
     const docRef = doc(db, HISTORY_COLLECTION, id);
     await deleteDoc(docRef);
     return true;
-  } catch (err) {
-    console.error('Failed to delete shift closing:', err);
+  } catch (err: any) {
+    if (isQuotaExceededError(err)) {
+      markFirestoreQuotaExceeded();
+      console.warn('Aviso de cota ao excluir fechamento de turno:', err?.message || err);
+    } else {
+      console.warn('Failed to delete shift closing:', err);
+    }
     return false;
   }
 }
@@ -249,6 +422,9 @@ export function subscribeToCloudPresence(
   workspaceName: string,
   onUpdate: (activeUsers: CloudPresenceUser[]) => void
 ): Unsubscribe {
+  if (isFirestoreQuotaExceeded()) {
+    return () => {};
+  }
   const safeWs = workspaceName.replace(/[^a-zA-Z0-9_-]/g, '_');
   const colRef = collection(db, `${PRESENCE_COLLECTION}_${safeWs}`);
 
@@ -267,7 +443,11 @@ export function subscribeToCloudPresence(
       onUpdate(users);
     },
     (err) => {
-      console.warn('Cloud presence subscription notice:', err);
+      if (isQuotaExceededError(err)) {
+        markFirestoreQuotaExceeded();
+      } else {
+        console.warn('Cloud presence subscription notice:', err);
+      }
     }
   );
 }
@@ -285,11 +465,22 @@ export interface RadioCloudPresence {
 
 /**
  * Pushes WebRTC / PTT signaling messages directly to Firestore in real-time.
+ * Filtra candidatos ICE para não consumir cota do Firestore.
  */
 export async function sendFirestoreRadioSignals(messages: SignalMessage[]): Promise<void> {
-  if (!messages || messages.length === 0) return;
+  if (!messages || messages.length === 0 || isFirestoreQuotaExceeded()) return;
+  // Permitir sinais essenciais e candidatos ICE direcionados para viabilizar WebRTC entre dispositivos
+  const essentialSignals = messages.filter(
+    (m) =>
+      m.kind !== 'speaking' &&
+      m.kind !== 'audio_chunk' &&
+      m.kind !== 'state_ping' &&
+      (m.kind !== 'candidate' || Boolean(m.to))
+  );
+  if (essentialSignals.length === 0) return;
+
   try {
-    const promises = messages.map((msg) => {
+    const promises = essentialSignals.map((msg) => {
       const docRef = doc(db, RADIO_SIGNALS_COLLECTION, msg.mid);
       const cleanPayload: Record<string, any> = {
         mid: msg.mid,
@@ -309,7 +500,9 @@ export async function sendFirestoreRadioSignals(messages: SignalMessage[]): Prom
     });
     await Promise.all(promises);
   } catch (err) {
-    console.warn('[Firestore Radio Signaling] Erro ao enviar sinais:', err);
+    if (isQuotaExceededError(err)) {
+      markFirestoreQuotaExceeded();
+    }
   }
 }
 
@@ -320,8 +513,11 @@ export function subscribeToFirestoreRadioSignals(
   myPeerId: string,
   onSignal: (msg: SignalMessage) => void
 ): Unsubscribe {
+  if (isFirestoreQuotaExceeded()) {
+    return () => {};
+  }
   const colRef = collection(db, RADIO_SIGNALS_COLLECTION);
-  const q = query(colRef, orderBy('ts', 'desc'), limit(40));
+  const q = query(colRef, orderBy('ts', 'desc'), limit(60));
 
   return onSnapshot(
     q,
@@ -331,8 +527,8 @@ export function subscribeToFirestoreRadioSignals(
         if (change.type === 'added' || change.type === 'modified') {
           const d = change.doc.data();
           if (!d || d.sender === myPeerId) return;
-          // Ignore signals older than 45s
-          if (d.ts && now - d.ts > 45000) return;
+          // Ignore signals older than 30s
+          if (d.ts && now - d.ts > 30000) return;
           if (d.to && d.to !== myPeerId) return;
 
           let parsedPayload = undefined;
@@ -362,7 +558,9 @@ export function subscribeToFirestoreRadioSignals(
       });
     },
     (err) => {
-      console.warn('[Firestore Radio Signals] Erro na subscrição em tempo real:', err);
+      if (isQuotaExceededError(err)) {
+        markFirestoreQuotaExceeded();
+      }
     }
   );
 }
@@ -376,7 +574,7 @@ export async function updateRadioCloudPresence(
   peerRole: string,
   channels: string[]
 ): Promise<void> {
-  if (!peerId) return;
+  if (!peerId || isFirestoreQuotaExceeded()) return;
   try {
     const docId = peerId.replace(/[^a-zA-Z0-9_-]/g, '_');
     const docRef = doc(db, RADIO_PRESENCE_COLLECTION, docId);
@@ -391,8 +589,10 @@ export async function updateRadioCloudPresence(
       },
       { merge: true }
     );
-  } catch {
-    // Silent presence failure tolerance
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      markFirestoreQuotaExceeded();
+    }
   }
 }
 
@@ -400,7 +600,7 @@ export async function updateRadioCloudPresence(
  * Removes peer presence from Firestore when radio turns off.
  */
 export async function removeRadioCloudPresence(peerId: string): Promise<void> {
-  if (!peerId) return;
+  if (!peerId || isFirestoreQuotaExceeded()) return;
   try {
     const docId = peerId.replace(/[^a-zA-Z0-9_-]/g, '_');
     const docRef = doc(db, RADIO_PRESENCE_COLLECTION, docId);
@@ -414,6 +614,9 @@ export async function removeRadioCloudPresence(peerId: string): Promise<void> {
 export function subscribeToRadioCloudPresence(
   onUpdate: (peersList: RadioCloudPresence[]) => void
 ): Unsubscribe {
+  if (isFirestoreQuotaExceeded()) {
+    return () => {};
+  }
   const colRef = collection(db, RADIO_PRESENCE_COLLECTION);
   return onSnapshot(
     colRef,
@@ -422,15 +625,23 @@ export function subscribeToRadioCloudPresence(
       const list: RadioCloudPresence[] = [];
       snapshot.forEach((d) => {
         const p = d.data() as RadioCloudPresence;
-        // Alive if seen within last 12 seconds
-        if (p && p.peerId && now - (p.lastSeen || 0) < 12000) {
+        // Presença ativa se visto nos últimos 18 segundos (evita colaboradores fantasmas)
+        const age = now - (p?.lastSeen || 0);
+        if (p && p.peerId && age < 18000) {
           list.push(p);
+        } else if (p && p.peerId && age > 30000) {
+          // Limpeza proativa de fantasmas obsoletos no Firestore
+          try {
+            deleteDoc(doc(db, RADIO_PRESENCE_COLLECTION, d.id)).catch(() => {});
+          } catch {}
         }
       });
       onUpdate(list);
     },
     (err) => {
-      console.warn('[Firestore Radio Presence] Erro no listener:', err);
+      if (isQuotaExceededError(err)) {
+        markFirestoreQuotaExceeded();
+      }
     }
   );
 }
@@ -483,13 +694,27 @@ export async function getUserProfileFromFirestore(
 }
 
 /**
+ * Permanently deletes a user profile document from Firestore.
+ */
+export async function deleteUserProfileFromFirestore(uid: string): Promise<void> {
+  if (!uid) return;
+  try {
+    const docId = uid.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const docRef = doc(db, USER_PROFILES_COLLECTION, docId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.warn('[Firestore User Profile] Erro ao remover perfil:', err);
+  }
+}
+
+/**
  * Subscribes to real-time updates of a user profile in Firestore.
  */
 export function subscribeToUserProfile(
   uid: string,
   onUpdate: (profile: import('../types').UserProfileData | null) => void
 ): Unsubscribe {
-  if (!uid) {
+  if (!uid || isFirestoreQuotaExceeded()) {
     return () => {};
   }
   const docId = uid.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -504,7 +729,11 @@ export function subscribeToUserProfile(
       }
     },
     (err) => {
-      console.warn('[Firestore User Profile] Erro na subscrição de perfil:', err);
+      if (isQuotaExceededError(err)) {
+        markFirestoreQuotaExceeded();
+      } else {
+        console.warn('[Firestore User Profile] Erro na subscrição de perfil:', err);
+      }
     }
   );
 }
@@ -558,5 +787,220 @@ export async function updateUserWorkStatus(
     console.warn('[Firestore User Profile] Erro ao atualizar status:', err);
   }
 }
+
+/**
+ * Saves a periodic, daily, or manual backup snapshot to Firestore.
+ */
+export async function saveBackupToFirestore(
+  state: AppState,
+  reason: string,
+  cadenceType: 'daily' | 'interval' | 'manual' | 'safety' | 'recovery' = 'daily',
+  authorName?: string,
+  maxRetain = 30
+): Promise<{ success: boolean; backup?: FirestoreBackupRecord; error?: string }> {
+  try {
+    const now = new Date();
+    const createdDate = getTodayISO();
+    const createdTime = now.toLocaleTimeString('pt-BR');
+    const teamName = state.teamName || 'Equipe Dimensio';
+    const workspaceId = (state.onlineSpreadsheet?.firestoreCollection || 'main_workspace')
+      .replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    const id = cadenceType === 'daily'
+      ? `daily_${workspaceId}_${createdDate}`
+      : `bkp_${workspaceId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+    // Prepare full state serialization
+    const stateJson = JSON.stringify(state);
+
+    const record: FirestoreBackupRecord = {
+      id,
+      workspaceId,
+      teamName,
+      createdAt: now.toISOString(),
+      createdDate,
+      createdTime,
+      cadenceType,
+      reason,
+      collaboratorCount: (state.collaborators || []).length,
+      taskCount: (state.tasks || []).length,
+      breakCount: (state.breaks || []).length,
+      shiftCount: (state.shifts || []).length,
+      authorName: authorName || 'Sistema Automático',
+      stateJson,
+      metadata: {
+        sector: state.sector || '',
+        manager: state.manager || '',
+        shifts: state.shifts || [],
+        scaleType: state.scaleType || '5x2',
+        appVersion: '1.5.0',
+        spreadsheetUrl: state.onlineSpreadsheet?.url || '',
+      },
+    };
+
+    const docRef = doc(db, BACKUPS_COLLECTION, id);
+    await setDoc(docRef, record);
+
+    // Prune older backups in the background to avoid quota waste
+    pruneOldFirestoreBackups(workspaceId, maxRetain).catch((err) => {
+      console.warn('Falha na limpeza de backups antigos do Firestore:', err);
+    });
+
+    return { success: true, backup: record };
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markFirestoreQuotaExceeded();
+      console.warn('Aviso de cota ao salvar backup no Firestore:', error);
+    } else {
+      console.warn('Erro ao salvar backup no Firestore:', error);
+    }
+    try {
+      handleFirestoreError(error, OperationType.WRITE, BACKUPS_COLLECTION);
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Falha ao salvar backup no Firestore' };
+    }
+  }
+}
+
+/**
+ * Lists backups stored in Firestore for this workspace.
+ */
+export async function listFirestoreBackups(
+  workspaceName?: string,
+  maxRecords = 40
+): Promise<FirestoreBackupRecord[]> {
+  if (isFirestoreQuotaExceeded()) {
+    return [];
+  }
+
+  try {
+    const colRef = collection(db, BACKUPS_COLLECTION);
+    let q;
+    if (workspaceName) {
+      const safeWs = workspaceName.replace(/[^a-zA-Z0-9_-]/g, '_');
+      q = query(
+        colRef,
+        where('workspaceId', '==', safeWs),
+        orderBy('createdAt', 'desc'),
+        limit(maxRecords)
+      );
+    } else {
+      q = query(colRef, orderBy('createdAt', 'desc'), limit(maxRecords));
+    }
+
+    const snap = await getDocs(q);
+    const records: FirestoreBackupRecord[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as FirestoreBackupRecord;
+      if (data && data.id) {
+        records.push(data);
+      }
+    });
+    return records;
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markFirestoreQuotaExceeded();
+      console.warn('Aviso de cota ao consultar backups do Firestore:', error);
+    } else {
+      console.warn('Erro ao consultar backups do Firestore:', error);
+    }
+    // Fallback without composite index if index is building
+    try {
+      const colRef = collection(db, BACKUPS_COLLECTION);
+      const snap = await getDocs(query(colRef, limit(maxRecords)));
+      const records: FirestoreBackupRecord[] = [];
+      snap.forEach((d) => {
+        const data = d.data() as FirestoreBackupRecord;
+        if (data && data.id) {
+          records.push(data);
+        }
+      });
+      records.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      return records;
+    } catch (err) {
+      return [];
+    }
+  }
+}
+
+/**
+ * Restores application state from a Firestore backup record.
+ */
+export async function restoreFirestoreBackup(
+  backupId: string
+): Promise<{ success: boolean; state?: Partial<AppState>; error?: string }> {
+  if (isFirestoreQuotaExceeded()) {
+    return { success: false, error: 'Limite diário gratuito do Firestore atingido.' };
+  }
+
+  try {
+    const docRef = doc(db, BACKUPS_COLLECTION, backupId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      return { success: false, error: 'Backup não encontrado no Firestore.' };
+    }
+
+    const data = snap.data() as FirestoreBackupRecord;
+    if (!data.stateJson) {
+      return { success: false, error: 'Arquivo de backup corrompido no Firestore (sem dados de estado).' };
+    }
+
+    const parsedState = JSON.parse(data.stateJson);
+    return { success: true, state: parsedState };
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      markFirestoreQuotaExceeded();
+      console.warn('Aviso de cota ao restaurar backup do Firestore:', error?.message || error);
+    } else {
+      console.warn('Erro ao restaurar backup do Firestore:', error);
+    }
+    return { success: false, error: error?.message || 'Falha ao processar backup do Firestore.' };
+  }
+}
+
+/**
+ * Deletes a backup from Firestore.
+ */
+export async function deleteFirestoreBackup(backupId: string): Promise<boolean> {
+  if (isFirestoreQuotaExceeded()) {
+    return false;
+  }
+
+  try {
+    const docRef = doc(db, BACKUPS_COLLECTION, backupId);
+    await deleteDoc(docRef);
+    return true;
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markFirestoreQuotaExceeded();
+      console.warn('Aviso de cota ao excluir backup do Firestore:', error);
+    } else {
+      console.warn('Erro ao excluir backup do Firestore:', error);
+    }
+    return false;
+  }
+}
+
+/**
+ * Prunes backups older than maxRetain for the given workspace.
+ */
+async function pruneOldFirestoreBackups(workspaceId: string, maxRetain: number): Promise<void> {
+  if (maxRetain <= 0) return;
+  try {
+    const colRef = collection(db, BACKUPS_COLLECTION);
+    const q = query(colRef, where('workspaceId', '==', workspaceId), orderBy('createdAt', 'desc'), limit(100));
+    const snap = await getDocs(q);
+    const docs = snap.docs;
+    if (docs.length > maxRetain) {
+      const toDelete = docs.slice(maxRetain);
+      for (const d of toDelete) {
+        await deleteDoc(d.ref).catch(() => {});
+      }
+    }
+  } catch {
+    // Non-critical, ignore
+  }
+}
+
 
 

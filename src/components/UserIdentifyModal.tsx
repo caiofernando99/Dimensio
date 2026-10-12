@@ -22,6 +22,8 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 
+import { useCommunication } from '../context/CommunicationContext';
+
 interface UserIdentifyModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -38,6 +40,7 @@ export const UserIdentifyModal: React.FC<UserIdentifyModalProps> = ({
   onClose,
   initialTab = 'identify',
 }) => {
+  const { leaveAll } = useCommunication();
   const {
     state,
     identifiedUser,
@@ -357,7 +360,14 @@ export const UserIdentifyModal: React.FC<UserIdentifyModalProps> = ({
             </div>
             <button
               type="button"
-              onClick={logoutUser}
+              onClick={() => {
+                try { leaveAll(); } catch {}
+                try {
+                  localStorage.removeItem('dimensio_portal_operator_id');
+                  localStorage.removeItem('dimensio_portal_operator_login_at');
+                } catch {}
+                logoutUser();
+              }}
               className="text-[11px] font-bold text-red-600 dark:text-red-400 hover:underline flex items-center gap-1 cursor-pointer"
             >
               <UserX className="w-3.5 h-3.5" />

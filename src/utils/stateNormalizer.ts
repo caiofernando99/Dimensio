@@ -80,15 +80,7 @@ export const initialAppStateDefaults: AppState = {
   helpdeskConfig: {
     enabled: true,
     supportRoles: [],
-    supportTypes: [
-      { id: 'preset_coletor', name: 'Problema no Coletor / Equipamento', priority: 'alta', description: 'Leitor travado, bateria, teclado ou falha no dispositivo' },
-      { id: 'preset_sistema', name: 'Suporte Técnico / Sistema', priority: 'media', description: 'Erro de sistema, tela travada ou lentidão' },
-      { id: 'preset_tarefa', name: 'Ajuste de Tarefa / Troca', priority: 'media', description: 'Solicitação de remanejamento ou troca de posto' },
-      { id: 'preset_processo', name: 'Dúvida de Processo / Qualidade', priority: 'baixa', description: 'Dúvida sobre bipagem, conferência ou procedimento operacional' },
-      { id: 'preset_tl', name: 'Liberação / Autorização TL', priority: 'alta', description: 'Aprovação de divergência ou liberação pelo líder' },
-      { id: 'preset_etiqueta', name: 'Troca de Etiqueta / Impressora', priority: 'media', description: 'Falta de fita/ribbon, etiqueta presa ou troca de rolo' },
-      { id: 'preset_outros', name: 'Outros Assuntos', priority: 'baixa', description: 'Outro tipo de solicitação operacional' },
-    ],
+    supportTypes: [],
     notifySound: true,
   },
   portalConfig: {},
@@ -575,18 +567,18 @@ export function normalizeAppState(rawInput: any, baseState?: AppState): AppState
         ? src.helpdeskConfig
         : (baseState?.helpdeskConfig || defaults.helpdeskConfig);
 
-      const defaultSupportTypes = defaults.helpdeskConfig?.supportTypes && defaults.helpdeskConfig.supportTypes.length > 0
+      const defaultSupportTypes = Array.isArray(defaults.helpdeskConfig?.supportTypes)
         ? defaults.helpdeskConfig.supportTypes
-        : DEFAULT_SUPPORT_TYPES;
+        : (Array.isArray(DEFAULT_SUPPORT_TYPES) ? DEFAULT_SUPPORT_TYPES : []);
 
-      const rawSupportTypes = Array.isArray(existing?.supportTypes) && existing.supportTypes.length > 0
+      const rawSupportTypes = Array.isArray(existing?.supportTypes)
         ? existing.supportTypes
-        : (Array.isArray(baseState?.helpdeskConfig?.supportTypes) && baseState.helpdeskConfig.supportTypes.length > 0
+        : (Array.isArray(baseState?.helpdeskConfig?.supportTypes)
             ? baseState.helpdeskConfig.supportTypes
             : defaultSupportTypes);
 
       const normalizedSupportTypes: SupportTypePreset[] = rawSupportTypes.map((p: any, idx: number) => ({
-        id: p.id ? String(p.id) : `preset_${idx}_${Date.now()}`,
+        id: p.id ? String(p.id) : (p.name ? `type_${String(p.name).toLowerCase().replace(/[^a-z0-9]/g, '_')}` : `type_${idx}`),
         name: String(p.name || 'Chamado Geral'),
         category: p.category ? String(p.category) : undefined,
         description: p.description ? String(p.description) : undefined,
@@ -606,11 +598,15 @@ export function normalizeAppState(rawInput: any, baseState?: AppState): AppState
         })) : [],
       }));
 
+      const normalizedSupportRoles = Array.isArray(existing?.supportRoles)
+        ? existing.supportRoles.map(String)
+        : (Array.isArray(baseState?.helpdeskConfig?.supportRoles)
+            ? baseState.helpdeskConfig.supportRoles.map(String)
+            : (defaults.helpdeskConfig?.supportRoles || ['Suporte', 'TL', 'Admin', 'Analista', 'PS']));
+
       return {
         enabled: existing?.enabled !== false,
-        supportRoles: Array.isArray(existing?.supportRoles) && existing.supportRoles.length > 0
-          ? existing.supportRoles.map(String)
-          : (baseState?.helpdeskConfig?.supportRoles || defaults.helpdeskConfig?.supportRoles || ['Suporte', 'TL', 'Admin', 'Analista', 'PS']),
+        supportRoles: normalizedSupportRoles,
         supportTypes: normalizedSupportTypes,
         notifySound: existing?.notifySound !== false,
         autoAssignCategory: Boolean(existing?.autoAssignCategory),

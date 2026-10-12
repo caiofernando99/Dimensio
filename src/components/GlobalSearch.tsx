@@ -43,132 +43,17 @@ import {
 import type { BreakSlot, Collaborator, Task } from '../types';
 import { CollabDetailsModal } from './CollabDetailsModal';
 import { MarkdownContent } from './MarkdownContent';
+import {
+  STATUS_META,
+  STATUS_ORDER,
+  ABSENCE_TERMS,
+  CollabResult,
+  TaskResult,
+  SkillCollabResult,
+} from './search/searchTypes';
+import { GlobalSearchBatchRequestModal } from './search/GlobalSearchBatchRequestModal';
 import { getAllTaskIdsInFamily, getRootTask, getDirectSubtasks } from '../utils/taskTreeHelpers';
 import { parseSmartSearchAction, type ParsedSmartAction } from '../utils/smartSearchEngine';
-
-const STATUS_META: Record<StatusType, { label: string; text: string; bg: string; dot: string }> = {
-  presente: {
-    label: 'Presente',
-    text: 'text-emerald-800 dark:text-emerald-200',
-    bg: 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800',
-    dot: 'bg-emerald-600',
-  },
-  atraso: {
-    label: 'Atraso',
-    text: 'text-amber-800 dark:text-amber-200',
-    bg: 'bg-amber-100 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800',
-    dot: 'bg-amber-600',
-  },
-  folga: {
-    label: 'Folga',
-    text: 'text-slate-700 dark:text-slate-300',
-    bg: 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700',
-    dot: 'bg-slate-500',
-  },
-  ferias: {
-    label: 'Férias',
-    text: 'text-purple-800 dark:text-purple-200',
-    bg: 'bg-purple-100 dark:bg-purple-950/70 border-purple-300 dark:border-purple-800',
-    dot: 'bg-purple-600',
-  },
-  licenca: {
-    label: 'Licença',
-    text: 'text-amber-800 dark:text-amber-200',
-    bg: 'bg-amber-100 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800',
-    dot: 'bg-amber-600',
-  },
-  atestado: {
-    label: 'Atestado',
-    text: 'text-blue-800 dark:text-blue-200',
-    bg: 'bg-blue-100 dark:bg-blue-950/70 border-blue-300 dark:border-blue-800',
-    dot: 'bg-blue-600',
-  },
-  banco_horas: {
-    label: 'Banco de Horas',
-    text: 'text-teal-800 dark:text-teal-200',
-    bg: 'bg-teal-100 dark:bg-teal-950/70 border-teal-300 dark:border-teal-800',
-    dot: 'bg-teal-600',
-  },
-  falta_injustificada: {
-    label: 'Falta Injustificada',
-    text: 'text-rose-800 dark:text-rose-200',
-    bg: 'bg-rose-100 dark:bg-rose-950/70 border-rose-300 dark:border-rose-800',
-    dot: 'bg-rose-600',
-  },
-  treinamento: {
-    label: 'Treinamento',
-    text: 'text-cyan-800 dark:text-cyan-200',
-    bg: 'bg-cyan-100 dark:bg-cyan-950/70 border-cyan-300 dark:border-cyan-800',
-    dot: 'bg-cyan-600',
-  },
-  ausente: {
-    label: 'Ausente',
-    text: 'text-red-800 dark:text-red-200',
-    bg: 'bg-red-100 dark:bg-red-950/70 border-red-300 dark:border-red-800',
-    dot: 'bg-red-600',
-  },
-};
-
-const STATUS_ORDER: StatusType[] = [
-  'presente',
-  'atraso',
-  'folga',
-  'ferias',
-  'licenca',
-  'atestado',
-  'treinamento',
-  'banco_horas',
-  'falta_injustificada',
-  'ausente',
-];
-
-const ABSENCE_TERMS: { term: string; status: StatusType; label: string }[] = [
-  { term: 'presente', status: 'presente', label: 'Presente' },
-  { term: 'atraso', status: 'atraso', label: 'Atraso' },
-  { term: 'folga', status: 'folga', label: 'Folga' },
-  { term: 'ferias', status: 'ferias', label: 'Férias' },
-  { term: 'férias', status: 'ferias', label: 'Férias' },
-  { term: 'licenca', status: 'licenca', label: 'Licença' },
-  { term: 'licença', status: 'licenca', label: 'Licença' },
-  { term: 'atestado', status: 'atestado', label: 'Atestado' },
-  { term: 'treinamento', status: 'treinamento', label: 'Treinamento' },
-  { term: 'banco de horas', status: 'banco_horas', label: 'Banco de Horas' },
-  { term: 'banco_horas', status: 'banco_horas', label: 'Banco de Horas' },
-  { term: 'falta injustificada', status: 'falta_injustificada', label: 'Falta Injustificada' },
-  { term: 'falta_injustificada', status: 'falta_injustificada', label: 'Falta Injustificada' },
-  { term: 'falta', status: 'falta_injustificada', label: 'Falta Injustificada' },
-  { term: 'ausente', status: 'ausente', label: 'Ausente' },
-];
-
-interface CollabResult {
-  collab: Collaborator;
-  status: StatusType;
-  tasksToday: Task[];
-  breakSlot?: BreakSlot;
-  isOffScale: boolean;
-  isExtraPresence: boolean;
-}
-
-interface TaskResult {
-  task: Task;
-  members: Array<{
-    collab: Collaborator;
-    status: StatusType;
-    breakSlot?: BreakSlot;
-    viaSubtask?: boolean;
-    subtaskName?: string;
-  }>;
-  rootTaskName?: string;
-  isSubtask: boolean;
-  hasSubtasks: boolean;
-  subtaskCount: number;
-}
-
-interface SkillCollabResult {
-  collab: Collaborator;
-  status: StatusType;
-  skills: Array<{ name: string; level: number }>;
-}
 
 export const GlobalSearch: React.FC = () => {
   const appContext = useApp();
@@ -3086,133 +2971,24 @@ export const GlobalSearch: React.FC = () => {
         )}
 
       {/* Modal para Criar Pedido em Lote (via React Portal no document.body) */}
-      {isBatchRequestOpen &&
-        createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 animate-in fade-in duration-150">
-          <div className="w-full max-w-lg bg-[var(--paper)] border border-[var(--line)] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between border-b border-[var(--line)] bg-[var(--bg)] px-4 py-3">
-              <div className="flex items-center gap-2">
-                <Megaphone className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                <h3 className="text-sm font-black text-[var(--ink)]">
-                  Criar Pedido / Aviso em Lote ({selectedMultiIds.length})
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsBatchRequestOpen(false)}
-                className="p-1 text-[var(--muted)] hover:text-[var(--ink)] rounded-lg"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleBatchSubmitRequest} className="p-4 space-y-3">
-              <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-800 dark:text-amber-300 font-bold space-y-1">
-                <div>Pedido com conteúdo composto por <strong>{selectedMultiIds.length} colaborador(es)</strong> selecionados.</div>
-                <div className="text-[10.5px] opacity-90 truncate">
-                  {state.collaborators
-                    .filter((c) => selectedMultiIds.includes(c.id))
-                    .map((c) => c.name)
-                    .join(', ')}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <label className="block text-[11px] font-black uppercase text-[var(--muted)] mb-1">
-                    Tipo do Pedido
-                  </label>
-                  <select
-                    value={batchReqType}
-                    onChange={(e) => setBatchReqType(e.target.value as any)}
-                    className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-lg p-2 font-bold text-[var(--ink)]"
-                  >
-                    <option value="acao_sistemica">Ação / Pedido Operacional</option>
-                    <option value="aviso">Aviso / Comunicado Geral</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-black uppercase text-[var(--muted)] mb-1">
-                    Prioridade
-                  </label>
-                  <select
-                    value={batchReqPriority}
-                    onChange={(e) => setBatchReqPriority(e.target.value as any)}
-                    className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-lg p-2 font-bold text-[var(--ink)]"
-                  >
-                    <option value="baixa">Baixa</option>
-                    <option value="media">Média (Normal)</option>
-                    <option value="alta">Alta</option>
-                    <option value="urgente">Urgente</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-black uppercase text-[var(--muted)] mb-1">
-                  Público / Turno Alvo
-                </label>
-                <select
-                  value={batchReqAudience}
-                  onChange={(e) => setBatchReqAudience(e.target.value as any)}
-                  className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-lg p-2 font-bold text-[var(--ink)]"
-                >
-                  <option value="todos">Todos os Turnos (Geral)</option>
-                  <option value="atual">Turno Atual</option>
-                  <option value="proximo">Próximo Turno</option>
-                  <option value="proximos">Próximos Turnos</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-black uppercase text-[var(--muted)] mb-1">
-                  Título do Pedido
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Treinamento obrigatório de segurança / remanejamento"
-                  value={batchReqTitle}
-                  onChange={(e) => setBatchReqTitle(e.target.value)}
-                  className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-lg p-2 text-xs font-bold text-[var(--ink)]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-black uppercase text-[var(--muted)] mb-1">
-                  Descrição e Orientações
-                </label>
-                <textarea
-                  rows={3}
-                  placeholder="Descreva detalhes das ações exigidas ou aviso da operação..."
-                  value={batchReqDescription}
-                  onChange={(e) => setBatchReqDescription(e.target.value)}
-                  className="w-full bg-[var(--bg)] border border-[var(--line)] rounded-lg p-2 text-xs font-medium text-[var(--ink)]"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--line)]">
-                <button
-                  type="button"
-                  onClick={() => setIsBatchRequestOpen(false)}
-                  className="px-3 py-1.5 bg-[var(--bg)] border border-[var(--line)] text-[var(--ink)] rounded-xl text-xs font-extrabold hover:bg-[var(--line)]"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black shadow-sm flex items-center gap-1.5"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Enviar Pedido ({selectedMultiIds.length})</span>
-                </button>
-              </div>
-            </form>
-          </div>
-          </div>,
-          document.body
-        )}
+      {/* Modal para Criar Pedido em Lote */}
+      <GlobalSearchBatchRequestModal
+        isOpen={isBatchRequestOpen}
+        onClose={() => setIsBatchRequestOpen(false)}
+        selectedMultiIds={selectedMultiIds}
+        collaborators={state.collaborators}
+        batchReqType={batchReqType}
+        setBatchReqType={setBatchReqType}
+        batchReqPriority={batchReqPriority}
+        setBatchReqPriority={setBatchReqPriority}
+        batchReqAudience={batchReqAudience}
+        setBatchReqAudience={setBatchReqAudience}
+        batchReqTitle={batchReqTitle}
+        setBatchReqTitle={setBatchReqTitle}
+        batchReqDescription={batchReqDescription}
+        setBatchReqDescription={setBatchReqDescription}
+        onSubmit={handleBatchSubmitRequest}
+      />
     </div>
   );
 };

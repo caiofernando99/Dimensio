@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { useI18n } from '../i18n';
 import {
   Info,
   Link as LinkIcon,
@@ -70,6 +71,7 @@ export const InfoHubView: React.FC = () => {
     updateInfoHubQuickFill,
     deleteInfoHubQuickFill,
   } = useApp();
+  const { t } = useI18n();
 
   // Primary Tab state - Default to 'visao_geral' (Tudo Mesclado)
   const [activeTab, setActiveTab] = useState<'visao_geral' | 'quick_fill' | 'links' | 'reminders'>('visao_geral');

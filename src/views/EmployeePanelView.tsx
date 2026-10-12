@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { useI18n } from '../i18n';
 import { useCommunication } from '../context/CommunicationContext';
 import { UserIdentifyModal } from '../components/UserIdentifyModal';
 import { SupportCodeDispatcher } from '../components/SupportCodeDispatcher';
@@ -87,6 +88,7 @@ export const EmployeePanelView: React.FC = () => {
     toggleScheduledTaskComplete,
     toggleScheduledSubtaskComplete,
   } = useApp();
+  const { t } = useI18n();
   const { channels, joinTaskChannel, setActiveChannel, enabled } = useCommunication();
   const [isIdentifyOpen, setIsIdentifyOpen] = useState(false);
   const [taskTab, setTaskTab] = useState<'today' | 'upcoming' | 'all'>('today');

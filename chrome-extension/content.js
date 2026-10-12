@@ -1,6 +1,27 @@
 // Dimensio Content Script for Google Sheets or Partner Webpages
 console.log('[Dimensio Extension] Content script carregado.');
 
+// Tag document and inject window.__DIMENSIO_BRIDGE__ into page context
+try {
+  document.documentElement.setAttribute('data-dimensio-ext', '1');
+  const bridgeScript = document.createElement('script');
+  bridgeScript.textContent = `
+    (function() {
+      window.__DIMENSIO_BRIDGE__ = {
+        installed: true,
+        version: '1.0.0',
+        dispatch: function(names, title) {
+          window.postMessage({ source: 'DIMENSIO_APP', type: 'DIMENSIO_HIGHLIGHT', names: names, title: title || '' }, '*');
+        }
+      };
+    })();
+  `;
+  (document.head || document.documentElement).appendChild(bridgeScript);
+  bridgeScript.remove();
+} catch (e) {
+  // ignore
+}
+
 const COLLECTS_KEY = 'dimensioCollects';
 const PICKS_KEY = 'dimensioPicks';
 const PICKER_ID = 'dimensio-picker';
@@ -24,6 +45,9 @@ window.addEventListener('message', (event) => {
       message: d.message,
     });
   }
+  if (d.source === 'DIMENSIO_APP' && d.type === 'DIMENSIO_HIGHLIGHT') {
+    highlightNamesOnPage(d.names, d.title);
+  }
   if (d.source === 'DIMENSIO_APP' && d.type === 'DIMENSIO_COLLECT') {
     const c = d.collect;
     if (c && c.requestId && c.metricId) {
@@ -31,6 +55,7 @@ window.addEventListener('message', (event) => {
         if (!pendingCollects.some((x) => x.requestId === c.requestId)) {
           pendingCollects.push(c);
           saveCollects();
+          runPendingCollects();
         }
       });
     }
@@ -125,14 +150,34 @@ async function runCollect(request) {
   try {
     const fields = Array.isArray(request.fields) ? request.fields : [];
     const values = {};
+
+    // Modo 1: Extração por seletores de campos
     for (const f of fields) {
       if (!f || !f.selector) continue;
       const el = await waitForSelector(f.selector);
       if (el) {
         const v = extractFieldValue(f);
-        if (v != null) values[f.id] = v;
+        if (v != null) {
+          values[f.id] = v;
+          // Feedback visual sutil (pisca verde) no elemento coletado
+          try {
+            const origOutline = el.style.outline;
+            el.style.outline = '2px solid #10b981';
+            setTimeout(() => { el.style.outline = origOutline; }, 1200);
+          } catch {}
+        }
       }
     }
+
+    // Modo 2: Contagem de elementos (ex: tarefas ativas, operadores na doca)
+    if (request.mode === 'count' && Array.isArray(request.countTerms)) {
+      for (const term of request.countTerms) {
+        if (!term || !term.selector) continue;
+        const matched = document.querySelectorAll(term.selector);
+        values[term.area || term.selector] = String(matched.length);
+      }
+    }
+
     if (Object.keys(values).length > 0) {
       chrome.runtime
         .sendMessage({
@@ -149,6 +194,72 @@ async function runCollect(request) {
     saveCollects();
   } finally {
     collectInFlight.delete(request.requestId);
+  }
+}
+
+// ── Motor de Destaque Visual no DOM (Localizador de Equipe) ────────────────
+function highlightNamesOnPage(names, title) {
+  if (!Array.isArray(names) || names.length === 0) return;
+  const terms = names.map((n) => String(n).trim().toLowerCase()).filter(Boolean);
+  if (terms.length === 0) return;
+
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+  let node;
+  const nodesToHighlight = [];
+  while ((node = walker.nextNode())) {
+    if (!node.parentElement) continue;
+    const tag = node.parentElement.tagName;
+    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEXTAREA' || tag === 'INPUT') continue;
+    const txt = (node.nodeValue || '').toLowerCase();
+    for (const term of terms) {
+      if (txt.includes(term)) {
+        nodesToHighlight.push({ node, term });
+        break;
+      }
+    }
+  }
+
+  let count = 0;
+  nodesToHighlight.forEach(({ node }) => {
+    const parent = node.parentElement;
+    if (parent && !parent.classList.contains('dimensio-highlighted')) {
+      parent.classList.add('dimensio-highlighted');
+      parent.style.backgroundColor = '#fef08a';
+      parent.style.color = '#854d0e';
+      parent.style.borderRadius = '4px';
+      parent.style.padding = '2px 4px';
+      parent.style.boxShadow = '0 0 0 2px #eab308';
+      count++;
+    }
+  });
+
+  // Mostra um aviso flutuante não-intrusivo com opção de limpar
+  let toast = document.getElementById('dimensio-highlight-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'dimensio-highlight-toast';
+    toast.style.cssText =
+      'position:fixed;top:16px;right:16px;z-index:2147483647;background:#0f172a;color:#f8fafc;padding:10px 14px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,0.4);border:1px solid #334155;font-family:system-ui,sans-serif;font-size:12px;display:flex;align-items:center;gap:8px;';
+    document.body.appendChild(toast);
+  }
+  toast.innerHTML = `
+    <span style="font-size:14px;">🎯</span>
+    <span><strong>${title || 'Dimensio'}</strong>: ${count} item(ns) destacado(s) na tela</span>
+    <button id="dimensio-clear-highlights" style="background:#334155;color:#f8fafc;border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px;font-weight:bold;margin-left:8px;">Limpar</button>
+  `;
+  const clearBtn = document.getElementById('dimensio-clear-highlights');
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      document.querySelectorAll('.dimensio-highlighted').forEach((el) => {
+        el.style.backgroundColor = '';
+        el.style.color = '';
+        el.style.borderRadius = '';
+        el.style.padding = '';
+        el.style.boxShadow = '';
+        el.classList.remove('dimensio-highlighted');
+      });
+      toast.remove();
+    };
   }
 }
 

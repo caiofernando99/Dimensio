@@ -101,6 +101,9 @@ async function tryPoll(targetUrl: string): Promise<{ messages: SignalMessage[]; 
     }
 
     u.searchParams.set('mode', 'signal');
+    if (cfg.peerId) {
+      u.searchParams.set('peerId', cfg.peerId);
+    }
     if (lastSeq > 0) {
       u.searchParams.set('sinceSeq', String(lastSeq));
     }

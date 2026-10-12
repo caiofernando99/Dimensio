@@ -40,6 +40,19 @@ export async function registerSW(): Promise<ServiceWorkerRegistration | null> {
     return null;
   }
 
+  // No modo de desenvolvimento Vite, desregistra workers antigos para evitar cache obsoleto
+  if (import.meta.env.DEV) {
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const r of registrations) {
+        await r.unregister();
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+
   try {
     const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
     swRegistration = reg;

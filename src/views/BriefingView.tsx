@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { useI18n } from '../i18n';
 import { Play, Printer, Check } from 'lucide-react';
 import { PageHeader, Card, Button } from '../components/ui';
 import type { BriefKind } from '../briefing/types';
@@ -33,6 +34,7 @@ export const BriefingView: React.FC = () => {
     briefingRemoveSlide,
     briefingSetLayers,
   } = useApp();
+  const { t } = useI18n();
 
   const deck = useMemo(() => state.briefDeck || defaultDeck(), [state.briefDeck]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -98,15 +100,15 @@ export const BriefingView: React.FC = () => {
     <div className="space-y-4 animate-in fade-in duration-200">
       <PageHeader
         icon={Play}
-        title="Montador de slides"
-        subtitle={`Briefing de ${formatDateLongBR(state.selectedDate)} • ${state.teamName || 'Equipe'} • salvo automaticamente`}
+        title={t('briefing.title')}
+        subtitle={`${t('nav.briefing')} • ${formatDateLongBR(state.selectedDate)} • ${state.teamName || 'Equipe'}`}
         actions={
           <>
-            <Button size="sm" variant="outline" icon={Printer} onClick={() => window.print()} title="Imprime todos os slides ativos">
-              Imprimir
+            <Button size="sm" variant="outline" icon={Printer} onClick={() => window.print()} title={t('common.print')}>
+              {t('common.print')}
             </Button>
-            <Button size="sm" icon={Play} onClick={() => startPresenting(active?.id)} title="Apresentar em tela cheia">
-              Apresentar
+            <Button size="sm" icon={Play} onClick={() => startPresenting(active?.id)} title={t('briefing.startBriefing')}>
+              {t('briefing.startBriefing')}
             </Button>
           </>
         }

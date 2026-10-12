@@ -13,95 +13,7 @@ export const DEFAULT_FIRESTORE_CONFIG: OnlineSpreadsheetConfig = {
   firestoreCollection: 'dimensio_workspaces',
 };
 
-export const DEFAULT_SUPPORT_TYPES: SupportTypePreset[] = [
-  {
-    id: 'preset_coletor',
-    name: 'Problema no Coletor / Equipamento',
-    priority: 'alta',
-    description: '📱 Coletor travado, leitor quebrado, bateria descarregada',
-    placeholder: 'Ex: Coletor CLT-014 travou na tela inicial',
-    fields: [
-      { id: 'f_col_1', label: 'Código do Coletor (ID/Patrimônio)', key: 'codigo_coletor', uppercase: true, required: true },
-      { id: 'f_col_2', label: 'Posto / Doca / Local', key: 'posto_local', uppercase: true, required: false },
-    ],
-  },
-  {
-    id: 'preset_bateria',
-    name: 'Troca de Bateria / Carregador',
-    priority: 'alta',
-    description: '🔋 Solicitação de bateria reserva ou suporte no posto',
-    placeholder: 'Ex: Bateria reserva solicitada na Doca 04',
-    fields: [
-      { id: 'f_bat_1', label: 'Código do Equipamento', key: 'codigo_equipamento', uppercase: true, required: true },
-      { id: 'f_bat_2', label: 'Estação / Doca', key: 'estacao_doca', uppercase: true, required: true },
-    ],
-  },
-  {
-    id: 'preset_etiqueta',
-    name: 'Troca de Etiqueta / Impressora',
-    priority: 'media',
-    description: '🏷️ Impressora sem rolo de etiqueta, ribbon ou travada',
-    placeholder: 'Ex: Impressora Zebra da Mesa 02 sem ribbon',
-    fields: [
-      { id: 'f_prt_1', label: 'Identificação da Impressora', key: 'codigo_impressora', uppercase: true, required: true },
-      { id: 'f_prt_2', label: 'Tipo de Insumo (Etiqueta / Ribbon)', key: 'tipo_insumo', required: false },
-    ],
-  },
-  {
-    id: 'preset_sistema',
-    name: 'Suporte Técnico / Sistema WMS',
-    priority: 'media',
-    description: '💻 Erro de tela, travamento de transação ou saldo divergente',
-    placeholder: 'Ex: Erro 403 ao dar baixa no lote 88291',
-    fields: [
-      { id: 'f_sys_1', label: 'Módulo / Transação WMS', key: 'modulo_transacao', uppercase: true, required: true },
-      { id: 'f_sys_2', label: 'Nº Lote / Pedido / SKU', key: 'numero_lote_sku', uppercase: true, required: false },
-    ],
-  },
-  {
-    id: 'preset_tarefa',
-    name: 'Ajuste de Tarefa / Troca de Posto',
-    priority: 'media',
-    description: '🔄 Troca de tarefa dimensionada ou solicitação de remanejamento',
-    placeholder: 'Ex: Finalizei Picking, solicito remanejamento para Packing',
-    fields: [
-      { id: 'f_tsk_1', label: 'Posto Atual', key: 'posto_atual', required: false },
-      { id: 'f_tsk_2', label: 'Posto Desejado / Sugerido', key: 'posto_desejado', required: false },
-    ],
-  },
-  {
-    id: 'preset_processo',
-    name: 'Dúvida de Processo / Qualidade / PI',
-    priority: 'baixa',
-    description: '❓ Validação de padrão operacional, contagem cega ou avaria',
-    placeholder: 'Ex: Dúvida sobre código EAN divergente no recebimento',
-    fields: [
-      { id: 'f_prc_1', label: 'Código do Produto (EAN / SKU)', key: 'codigo_ean_sku', uppercase: true, required: false },
-      { id: 'f_prc_2', label: 'Dúvida / Ocorrência', key: 'detalhe_duvida', required: false },
-    ],
-  },
-  {
-    id: 'preset_tl',
-    name: 'Liberação / Autorização TL',
-    priority: 'alta',
-    description: '🔑 Autorização de supervisor/líder para prosseguir no fluxo',
-    placeholder: 'Ex: Solicito liberação de divergência no palete 502',
-    fields: [
-      { id: 'f_tl_1', label: 'Motivo da Liberação', key: 'motivo_liberacao', required: true },
-      { id: 'f_tl_2', label: 'Posição / Doca / Palete', key: 'posicao_palete', uppercase: true, required: false },
-    ],
-  },
-  {
-    id: 'preset_outros',
-    name: 'Outros Assuntos / Informações Gerais',
-    priority: 'baixa',
-    description: '💬 Dúvidas gerais ou comunicados operacionais',
-    placeholder: 'Ex: Solicitação de orientação operacional',
-    fields: [
-      { id: 'f_out_1', label: 'Assunto / Detalhes', key: 'assunto', required: true },
-    ],
-  },
-];
+export const DEFAULT_SUPPORT_TYPES: SupportTypePreset[] = [];
 
 export const initialAppState: AppState = {
   location: '',
@@ -188,6 +100,10 @@ export const initialAppState: AppState = {
   autoBackupSettings: {
     enabled: true,
     intervalMinutes: 30,
+    scheduleCadence: 'daily',
+    dailyBackupTime: '06:00',
+    saveToFirestore: true,
+    maxRetainFirestoreBackups: 30,
     maxRetainSnapshots: 20,
     lastAutoBackupAt: undefined,
   },

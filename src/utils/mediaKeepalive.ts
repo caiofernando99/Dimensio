@@ -319,7 +319,10 @@ class MediaKeepaliveManager {
    * Garante que o stream de áudio esteja rodando.
    */
   public ensurePlaying() {
-    if (!this.isRunning) return;
+    if (!this.isRunning) {
+      this.start().catch(() => {});
+      return;
+    }
 
     if (this.audioCtx && this.audioCtx.state === 'suspended') {
       this.audioCtx.resume().catch(() => {});

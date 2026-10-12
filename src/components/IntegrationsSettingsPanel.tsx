@@ -136,15 +136,15 @@ export const IntegrationsSettingsPanel: React.FC<IntegrationsSettingsPanelProps>
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Live endpoint test selector
-  const [selectedEndpointTest, setSelectedEndpointTest] = useState<string>('/api/dimensio/overview');
+  const [selectedEndpointTest, setSelectedEndpointTest] = useState<string>('/api/v1/overview');
   const [isTestingEndpoint, setIsTestingEndpoint] = useState<boolean>(false);
   const [endpointResult, setEndpointResult] = useState<any | null>(null);
 
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
-  const apiUrlGet = `${baseUrl}/api/presence?date=${selectedDate}${shiftFilter !== 'ALL' ? `&shift=${shiftFilter}` : ''}${scaleFilter !== 'ALL' ? `&scale=${scaleFilter}` : ''}&format=${format}`;
-  const apiUrlPost = `${baseUrl}/api/presence`;
-  const apiUrlWebhook = `${baseUrl}/api/presence/webhook`;
-  const apiUrlDimensioOverview = `${baseUrl}/api/dimensio/overview`;
+  const apiUrlGet = `${baseUrl}/api/v1/presence?date=${selectedDate}${shiftFilter !== 'ALL' ? `&shift=${shiftFilter}` : ''}${scaleFilter !== 'ALL' ? `&scale=${scaleFilter}` : ''}&format=${format}`;
+  const apiUrlPost = `${baseUrl}/api/v1/presence`;
+  const apiUrlWebhook = `${baseUrl}/api/v1/presence/webhook`;
+  const apiUrlDimensioOverview = `${baseUrl}/api/v1/overview`;
 
   useEffect(() => {
     // Sincroniza presença com servidor da API
@@ -320,69 +320,81 @@ export const IntegrationsSettingsPanel: React.FC<IntegrationsSettingsPanelProps>
   const apiEndpoints = [
     {
       method: 'GET',
-      path: '/api/dimensio/overview',
-      desc: 'Resumo operacional, contagem de presentes/ausentes, postos e chamados ativos.',
+      path: '/api/v1/overview',
+      desc: 'Resumo operacional em tempo real: contagem de presentes, faltas, capacidade e postos ocupados.',
       category: 'Geral',
     },
     {
       method: 'GET',
-      path: '/api/presence?date=' + selectedDate,
-      desc: 'Consulta lista de presença, faltas, férias, atestados e turnos da data.',
+      path: '/api/v1/presence?date=' + selectedDate,
+      desc: 'Consulta lista de presença, faltas, férias, atestados e turnos da data (suporta format=json|csv).',
       category: 'Presença',
     },
     {
       method: 'POST',
-      path: '/api/presence',
-      desc: 'Insere ou atualiza registros de presença (aceita JSON com match por login, nome ou matrícula).',
+      path: '/api/v1/presence',
+      desc: 'Insere ou atualiza registros de presença (aceita JSON com match automático por login, nome ou matrícula).',
       category: 'Presença',
     },
     {
       method: 'POST',
-      path: '/api/presence/webhook',
-      desc: 'Webhook de ponto eletrônico para recepção instantânea de batidas de ponto.',
+      path: '/api/v1/presence/webhook',
+      desc: 'Webhook de ponto eletrônico para recepção instantânea de batidas de ponto e totens.',
       category: 'Presença',
     },
     {
       method: 'GET',
-      path: '/api/collaborators',
-      desc: 'Lista todos os colaboradores cadastrados, turnos, escalas e cargos.',
+      path: '/api/v1/collaborators',
+      desc: 'Lista todos os colaboradores cadastrados, turnos, escalas, turmas e cargos.',
       category: 'Equipe',
     },
     {
       method: 'GET',
-      path: '/api/tasks',
-      desc: 'Lista postos de trabalho e quantidade de operadores alocados.',
+      path: '/api/v1/tasks',
+      desc: 'Lista postos de trabalho, capacidade requerida e operadores alocados em cada posto.',
       category: 'Alocação',
     },
     {
       method: 'POST',
-      path: '/api/tasks/assign',
-      desc: 'Aloca um colaborador em um posto operacional via API.',
+      path: '/api/v1/tasks/assign',
+      desc: 'Aloca um colaborador em um posto operacional via API por ID, Nome, Matrícula ou Login.',
       category: 'Alocação',
     },
     {
       method: 'GET',
-      path: '/api/breaks?date=' + selectedDate,
-      desc: 'Consulta a escala de horários de intervalos e refeição da data.',
+      path: '/api/v1/breaks?date=' + selectedDate,
+      desc: 'Consulta a escala de horários de intervalos e refeição (NR-17) da data.',
       category: 'Intervalos',
     },
     {
       method: 'GET',
-      path: '/api/routines',
-      desc: 'Consulta rotinas agendadas, feedbacks e checklists operacionais.',
+      path: '/api/v1/routines',
+      desc: 'Consulta rotinas agendadas, checklists operacionais e agendamentos de feedback.',
       category: 'Rotinas',
     },
     {
       method: 'GET',
-      path: '/api/metrics',
-      desc: 'Consulta definições de métricas e leituras da extensão do Dimensio.',
+      path: '/api/v1/metrics',
+      desc: 'Consulta definições de métricas, metas operacionais e leituras de sensores/extensão.',
       category: 'Métricas',
     },
     {
       method: 'GET',
-      path: '/api/support/requests',
+      path: '/api/v1/requests',
       desc: 'Lista chamados de suporte, pedidos de insumos e helpdesk da operação.',
       category: 'Suporte',
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/info-hub',
+      desc: 'Base compartilhada multi-app de avisos, atalhos/links e códigos de preenchimento rápido.',
+      category: 'Hub',
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/notifications/broadcast',
+      desc: 'Transmite avisos operacionais urgentes em tempo real para todos os terminais e celulares.',
+      category: 'Notificações',
     },
   ];
 
@@ -898,14 +910,16 @@ export const IntegrationsSettingsPanel: React.FC<IntegrationsSettingsPanelProps>
                   onChange={(e) => setSelectedEndpointTest(e.target.value)}
                   className="flex-1 bg-[var(--paper)] border border-[var(--line)] rounded-xl px-3 py-2 text-xs font-mono font-bold text-[var(--ink)] focus:outline-none focus:border-[var(--primary)]"
                 >
-                  <option value="/api/dimensio/overview">GET /api/dimensio/overview (Resumo Geral Operacional)</option>
-                  <option value={`/api/presence?date=${selectedDate}&format=json`}>GET /api/presence (Lista de Presença do Dia)</option>
-                  <option value="/api/collaborators">GET /api/collaborators (Todos os Colaboradores)</option>
-                  <option value="/api/tasks">GET /api/tasks (Postos de Trabalho & Alocações)</option>
-                  <option value={`/api/breaks?date=${selectedDate}`}>GET /api/breaks (Escala de Intervalos)</option>
-                  <option value="/api/routines">GET /api/routines (Rotinas e Google Tasks)</option>
-                  <option value="/api/metrics">GET /api/metrics (Métricas & Extensão)</option>
-                  <option value="/api/support/requests">GET /api/support/requests (Chamados de Suporte)</option>
+                  <option value="/api/v1/overview">GET /api/v1/overview (Resumo Operacional em Tempo Real)</option>
+                  <option value={`/api/v1/presence?date=${selectedDate}&format=json`}>GET /api/v1/presence (Lista de Presença do Dia)</option>
+                  <option value="/api/v1/collaborators">GET /api/v1/collaborators (Equipe & Colaboradores)</option>
+                  <option value="/api/v1/tasks">GET /api/v1/tasks (Postos de Trabalho & Dimensionamento)</option>
+                  <option value={`/api/v1/breaks?date=${selectedDate}`}>GET /api/v1/breaks (Escala de Intervalos NR-17)</option>
+                  <option value="/api/v1/routines">GET /api/v1/routines (Rotinas e Checklists)</option>
+                  <option value="/api/v1/requests">GET /api/v1/requests (Chamados de Apoio & Insumos)</option>
+                  <option value="/api/v1/metrics">GET /api/v1/metrics (Métricas & Telemetria)</option>
+                  <option value="/api/v1/info-hub">GET /api/v1/info-hub (Hub Compartilhado Multi-App)</option>
+                  <option value="/api/v1/catalog">GET /api/v1/catalog (Catálogo & Diretório da API)</option>
                   <option value="/api/health">GET /api/health (Health Check & Uptime)</option>
                 </select>
 
@@ -918,6 +932,17 @@ export const IntegrationsSettingsPanel: React.FC<IntegrationsSettingsPanelProps>
                   <RefreshCw className={`w-3.5 h-3.5 ${isTestingEndpoint ? 'animate-spin' : ''}`} />
                   <span>{isTestingEndpoint ? 'Executando...' : 'Executar Teste'}</span>
                 </button>
+
+                <a
+                  href="/api/docs"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-2 bg-[var(--paper)] hover:bg-[var(--bg)] border border-[var(--line)] text-[var(--ink)] rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
+                  title="Abrir Swagger / Documentação Interativa"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-[var(--primary)]" />
+                  <span>Swagger Docs ↗</span>
+                </a>
               </div>
 
               {endpointResult && (

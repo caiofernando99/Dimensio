@@ -392,6 +392,41 @@ export const SyncProvider: React.FC<{ children: React.ReactNode; appState: AppSt
         return false;
       }
 
+      // --- MECANISMO DE DIFFING GRANULAR ---
+      const areDifferent = (a: any, b: any) => {
+        if (a === b) return false;
+        if (typeof a !== typeof b) return true;
+        try {
+          return JSON.stringify(a) !== JSON.stringify(b);
+        } catch {
+          return true;
+        }
+      };
+
+      const changedFields: Partial<AppState> = {};
+      let hasChanges = false;
+
+      const keysToCheck: (keyof AppState)[] = [
+        'collaborators', 'deletedCollaborators', 'tempNotes', 'tasks', 'breaks',
+        'attendance', 'intervals', 'roles', 'categories', 'skills', 'teamLeaders',
+        'dailyReports', 'teamName', 'sector', 'manager', 'teamShift', 'defaultTeamLeader',
+        'infoHubQuickFills', 'infoHubLinks', 'infoHubReminders', 'serviceRequests',
+        'processKnowledgeList', 'roleTypes', 'editorRoles', 'userPasswords'
+      ];
+
+      keysToCheck.forEach((key) => {
+        if (remoteState[key] !== undefined && areDifferent(appState[key], remoteState[key])) {
+          (changedFields as any)[key] = remoteState[key];
+          hasChanges = true;
+        }
+      });
+
+      if (!hasChanges) {
+        lastSyncedTimestampMs.current = remoteUpdatedAtMs;
+        try { localStorage.setItem(LAST_SYNCED_TIMESTAMP_KEY, String(remoteUpdatedAtMs)); } catch {}
+        return true;
+      }
+
       isRemoteOrBroadcastUpdate.current = true;
       lastSyncedTimestampMs.current = remoteUpdatedAtMs;
       try { localStorage.setItem(LAST_SYNCED_TIMESTAMP_KEY, String(remoteUpdatedAtMs)); } catch {}
@@ -400,34 +435,10 @@ export const SyncProvider: React.FC<{ children: React.ReactNode; appState: AppSt
 
       setAppState((prev) => ({
         ...prev,
-        collaborators: remoteState.collaborators || prev.collaborators,
-        deletedCollaborators: Array.isArray(remoteState.deletedCollaborators) ? remoteState.deletedCollaborators : prev.deletedCollaborators,
-        tempNotes: remoteState.tempNotes || prev.tempNotes,
-        tasks: remoteState.tasks || prev.tasks,
-        breaks: remoteState.breaks || prev.breaks,
-        attendance: remoteState.attendance || prev.attendance,
-        intervals: remoteState.intervals || prev.intervals,
-        roles: remoteState.roles || prev.roles,
-        categories: remoteState.categories || prev.categories,
-        skills: remoteState.skills || prev.skills,
-        teamLeaders: remoteState.teamLeaders || prev.teamLeaders,
-        dailyReports: remoteState.dailyReports || prev.dailyReports,
-        teamName: remoteState.teamName || prev.teamName,
-        sector: remoteState.sector || prev.sector,
-        manager: remoteState.manager || prev.manager,
-        teamShift: remoteState.teamShift || prev.teamShift,
-        defaultTeamLeader: remoteState.defaultTeamLeader || prev.defaultTeamLeader,
-        infoHubQuickFills: Array.isArray(remoteState.infoHubQuickFills) ? remoteState.infoHubQuickFills : prev.infoHubQuickFills,
-        infoHubLinks: Array.isArray(remoteState.infoHubLinks) ? remoteState.infoHubLinks : prev.infoHubLinks,
-        infoHubReminders: Array.isArray(remoteState.infoHubReminders) ? remoteState.infoHubReminders : prev.infoHubReminders,
-        serviceRequests: Array.isArray(remoteState.serviceRequests) ? remoteState.serviceRequests : prev.serviceRequests,
+        ...changedFields,
         notifications: Array.isArray(remoteState.notifications) ? remoteState.notifications : prev.notifications,
         deletedNotificationIds: Array.isArray(remoteState.deletedNotificationIds) ? remoteState.deletedNotificationIds : prev.deletedNotificationIds,
         auditLogs: Array.isArray(remoteState.auditLogs) ? remoteState.auditLogs : prev.auditLogs,
-        processKnowledgeList: Array.isArray(remoteState.processKnowledgeList) ? remoteState.processKnowledgeList : prev.processKnowledgeList,
-        roleTypes: remoteState.roleTypes || prev.roleTypes,
-        editorRoles: Array.isArray(remoteState.editorRoles) ? remoteState.editorRoles : prev.editorRoles,
-        userPasswords: remoteState.userPasswords || prev.userPasswords,
         updatedAtMs: remoteUpdatedAtMs,
         onlineSpreadsheet: prev.onlineSpreadsheet
           ? {
@@ -874,21 +885,27 @@ export const SyncProvider: React.FC<{ children: React.ReactNode; appState: AppSt
     appState.updatedAtMs,
   ]);
 
-  // Background polling effect to receive changes from other team members using the same spreadsheet
+  // Background polling effect for Google Sheets Webhook (Firestore has onSnapshot real-time streaming)
   useEffect(() => {
     const currentConfig = appState.onlineSpreadsheet;
-    if (!currentConfig || !currentConfig.webhookUrl || currentConfig.autoSyncEnabled === false) {
+    if (
+      !currentConfig ||
+      currentConfig.databaseProvider === 'firestore' ||
+      !currentConfig.webhookUrl ||
+      currentConfig.autoSyncEnabled === false
+    ) {
       return;
     }
 
     const interval = setInterval(() => {
-      if (Date.now() - lastLocalEditTime.current > 1200) {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (Date.now() - lastLocalEditTime.current > 5000) {
         fetchFromOnlineSpreadsheet(true);
       }
-    }, 2000);
+    }, 20000);
 
     return () => clearInterval(interval);
-  }, [appState.onlineSpreadsheet?.webhookUrl, appState.onlineSpreadsheet?.autoSyncEnabled, appState.updatedAtMs]);
+  }, [appState.onlineSpreadsheet?.webhookUrl, appState.onlineSpreadsheet?.databaseProvider, appState.onlineSpreadsheet?.autoSyncEnabled]);
 
   return (
     <SyncContext.Provider

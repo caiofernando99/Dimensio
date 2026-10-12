@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { useI18n } from '../i18n';
 import {
   ListTodo,
   Clock,
@@ -29,6 +30,9 @@ import {
   Info,
   Sparkles,
   MapPinned,
+  Mic,
+  Power,
+  Volume2,
 } from 'lucide-react';
 import {
   Card,
@@ -46,6 +50,7 @@ import {
   Modal,
 } from '../components/ui';
 import { CommunicationPanel } from '../components/CommunicationPanel';
+import { LogoutModal } from '../components/LogoutModal';
 import { useCommunication } from '../context/CommunicationContext';
 import { SupportCodeDispatcher } from '../components/SupportCodeDispatcher';
 import { UserNotificationsModal } from '../components/UserNotificationsModal';
@@ -76,6 +81,7 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
     isNotificationForCurrentUser,
     getTaskAreaCounts,
   } = useApp();
+  const { t } = useI18n();
 
   const [activeTab, setActiveTab] = useState<'tarefas' | 'intervalos' | 'comunicacao' | 'links'>('tarefas');
   const [isNotificationsModalOpen, setIsNotificationsModalOpen] = useState(false);
@@ -83,7 +89,21 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
 
   // Rádio: enquanto estiver ligado, o modo segundo plano permanece sempre ativo
   // (coletor Honeywell) para não suspender a transmissão de voz.
-  const { enabled: radioEnabled } = useCommunication();
+  const {
+    enabled: radioEnabled,
+    setEnabled: setRadioEnabled,
+    speaking,
+    remoteTransmitting,
+    startSpeaking,
+    stopSpeaking,
+    transmissionLocked,
+    setTransmissionLocked,
+    activeChannel,
+    channels,
+    audioBlocked,
+    resumeAllAudio,
+    relayOnline,
+  } = useCommunication();
 
   // Read URL query parameters for default filters
   const urlParams = useMemo(() => {
@@ -108,6 +128,8 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
   const [abbreviateNames, setAbbreviateNames] = useState<boolean>(() => {
     return urlParams.get('abbrev') === 'true' || state.abbreviatePortalNames === true;
   });
+
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
   // Filter States initialized from URL params if present
   const [filterShift, setFilterShift] = useState<string>(() => urlParams.get('shift') || 'all');
@@ -172,8 +194,10 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
   useEffect(() => {
     if (!isIdentified) {
       setIsSelectingOperator(true);
+    } else if (selectedCollaboratorId && !identifiedUser) {
+      identifyUser(selectedCollaboratorId);
     }
-  }, []);
+  }, [isIdentified, selectedCollaboratorId, identifiedUser, identifyUser]);
 
   // Synchronize when identifiedUser changes in AppContext
   useEffect(() => {
@@ -717,16 +741,175 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
               variant="ghost"
               size="sm"
               icon={LogOut}
-              onClick={handleLogoutOperator}
-              title="Trocar Operador / Sair"
+              onClick={() => setIsLogoutModalOpen(true)}
+              title="Trocar Operador / Sair da Equipe"
               className="text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 hover:text-rose-600"
             />
           </div>
         </div>
       </header>
 
+      {/* Autoplay Audio Blocked Banner */}
+      {audioBlocked && radioEnabled && (
+        <div className="bg-amber-500 text-slate-950 px-4 py-2.5 text-xs font-black flex flex-wrap items-center justify-between gap-2 shadow-sm animate-pulse">
+          <div className="flex items-center gap-2">
+            <Volume2 className="w-4 h-4 shrink-0" />
+            <span>Áudio pausado pelo navegador. Toque aqui para desbloquear a recepção de voz ao vivo.</span>
+          </div>
+          <button
+            type="button"
+            onClick={resumeAllAudio}
+            className="px-3 py-1 bg-slate-950 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-slate-800"
+          >
+            Liberar Áudio Agora
+          </button>
+        </div>
+      )}
+
       {/* MAIN CONTAINER */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-5 space-y-4">
+        {/* Persistent Dimensio Talk Radio Status & Quick Talk Bar */}
+        {state.showRadioModule !== false && (
+          <div className="bg-[var(--paper)] border border-[var(--line)] rounded-2xl p-2.5 sm:p-3 flex flex-wrap items-center justify-between gap-2.5 shadow-2xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div
+                className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                  radioEnabled
+                    ? speaking
+                      ? 'bg-rose-500 text-white animate-pulse'
+                      : remoteTransmitting
+                      ? 'bg-emerald-500 text-white animate-pulse'
+                      : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                    : 'bg-slate-200 dark:bg-slate-800 text-[var(--muted)]'
+                }`}
+              >
+                <Radio className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black uppercase tracking-wide text-[var(--ink)]">
+                    Dimensio Talk
+                  </span>
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      radioEnabled ? (relayOnline ? 'bg-emerald-500 animate-ping' : 'bg-emerald-500') : 'bg-slate-400'
+                    }`}
+                  />
+                  <span className="text-[10px] font-bold text-[var(--muted)] truncate">
+                    {radioEnabled
+                      ? `Canal: ${channels.find((c) => c.id === activeChannel)?.label || 'Geral'}`
+                      : 'Desligado'}
+                  </span>
+                </div>
+                <div className="text-[9.5px] text-[var(--muted)] font-medium flex items-center gap-2">
+                  {radioEnabled ? (
+                    speaking ? (
+                      <span className="text-rose-600 dark:text-rose-400 font-black">● Transmitindo voz...</span>
+                    ) : remoteTransmitting ? (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-black">● Colega falando no rádio...</span>
+                    ) : (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold">● Rádio PTT Conectado (2º plano ativo)</span>
+                    )
+                  ) : (
+                    <span>Toque para ligar e ouvir sua equipe</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {radioEnabled ? (
+                <>
+                  <button
+                    type="button"
+                    onContextMenu={(e) => e.preventDefault()}
+                    onPointerMove={(e) => e.preventDefault()}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      try {
+                        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                      } catch {}
+                      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                        try { navigator.vibrate(50); } catch {}
+                      }
+                      if (transmissionLocked) {
+                        if (speaking) {
+                          stopSpeaking();
+                        } else {
+                          startSpeaking();
+                        }
+                      } else {
+                        startSpeaking();
+                      }
+                    }}
+                    onPointerUp={(e) => {
+                      try {
+                        (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+                      } catch {}
+                      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                        try { navigator.vibrate(25); } catch {}
+                      }
+                      if (!transmissionLocked) {
+                        stopSpeaking();
+                      }
+                    }}
+                    onPointerCancel={(e) => {
+                      // Do not kill speech on Android pointer jitter / accidental cancel in lock mode
+                      if (!transmissionLocked) {
+                        setTimeout(() => {
+                          if (!transmissionLocked) stopSpeaking();
+                        }, 250);
+                      }
+                    }}
+                    style={{ touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer select-none touch-none transition-all active:scale-95 shadow-md ${
+                      speaking
+                        ? 'bg-rose-600 text-white animate-pulse ring-4 ring-rose-500/30'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    }`}
+                  >
+                    <Mic className="w-4 h-4" />
+                    <span>{speaking ? (transmissionLocked ? 'NO AR (TOQUE P/ PARAR)' : 'FALANDO...') : (transmissionLocked ? 'TOQUE P/ FALAR' : 'APERTE E FALE')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTransmissionLocked(!transmissionLocked)}
+                    className={`px-2.5 py-2 rounded-xl border text-xs font-black flex items-center gap-1 cursor-pointer transition-colors ${
+                      transmissionLocked
+                        ? 'bg-rose-500 text-white border-rose-400'
+                        : 'bg-[var(--surface-2)] border-[var(--line)] text-[var(--ink)] hover:border-[var(--primary)]'
+                    }`}
+                    title={transmissionLocked ? 'Destravar transmissão contínua' : 'Travar microfone para falar sem segurar'}
+                  >
+                    <Radio className={`w-3.5 h-3.5 ${transmissionLocked ? 'animate-pulse' : ''}`} />
+                    <span className="hidden sm:inline">{transmissionLocked ? 'Destravar' : 'Travar'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('comunicacao')}
+                    className="px-2.5 py-2 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] hover:bg-[var(--line)] text-[var(--ink)] text-xs font-bold flex items-center gap-1 cursor-pointer"
+                    title="Abrir painel completo com todos os canais"
+                  >
+                    <span>Canais</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRadioEnabled(true);
+                    resumeAllAudio();
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Power className="w-3.5 h-3.5" />
+                  <span>Ligar Rádio</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* TAB SWITCHER */}
         <Tabs
           items={[
@@ -1551,6 +1734,10 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
         targetShift={currentCollaborator?.shift}
         collaboratorId={currentCollaborator?.id}
         collaboratorName={currentCollaborator?.name}
+      />
+      <LogoutModal
+        isOpen={isLogoutModalOpen}
+        onClose={() => setIsLogoutModalOpen(false)}
       />
     </div>
   );

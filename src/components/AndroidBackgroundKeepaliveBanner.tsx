@@ -3,6 +3,7 @@ import { Smartphone, Bell, Check, X, ShieldCheck, Volume2, Wifi } from 'lucide-r
 import { requestNotificationPermission, isNotificationSupportedAndGranted } from '../utils/notifications';
 import { useCommunication } from '../context/CommunicationContext';
 import { useApp } from '../context/AppContext';
+import { mediaKeepalive } from '../utils/mediaKeepalive';
 
 const DISMISSED_KEY = 'dimensio_android_bg_banner_dismissed_v1';
 
@@ -42,6 +43,7 @@ export const AndroidBackgroundKeepaliveBanner: React.FC = () => {
 
       // 2. Unlock HTML5 Audio via direct user tap
       resumeAllAudio();
+      mediaKeepalive.start().catch(() => {});
 
       // 3. Request WakeLock
       requestWakeLock();

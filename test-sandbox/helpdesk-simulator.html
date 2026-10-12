@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniDesk — Central de Atendimento & SAC Operacional</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f8fafc; color: #0f172a; }
+  </style>
+</head>
+<body class="p-4 sm:p-6 min-h-screen">
+  <!-- Top Navigation -->
+  <div class="max-w-6xl mx-auto bg-slate-900 text-white p-4 rounded-xl flex items-center justify-between shadow-md mb-6">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center font-black text-sm">SAC</div>
+      <div>
+        <div class="text-sm font-black tracking-wide">OMNIDESK ENTERPRISE · CENTRAL DE ATENDIMENTO</div>
+        <div class="text-[11px] text-slate-400">Torre de Operações · Fila N1 & N2 Suporte</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-3 text-xs">
+      <span class="px-2.5 py-1 rounded bg-slate-800 text-slate-300 font-mono">Canal: Voz + Chat + Tickets</span>
+      <span class="px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">DISPONÍVEL</span>
+      <a href="/test-sandbox/index.html" class="text-slate-400 hover:text-white ml-2 text-xs">← Voltar ao Sandbox</a>
+    </div>
+  </div>
+
+  <main class="max-w-6xl mx-auto space-y-6">
+    <!-- Extension Diagnostic Bar -->
+    <div class="bg-violet-50 border border-violet-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+      <div class="flex items-center gap-2">
+        <span class="text-lg">🎯</span>
+        <div>
+          <span class="font-black text-violet-900">Extensão Dimensio no Helpdesk:</span>
+          <span class="text-violet-700 ml-1">Página pronta para captura de métricas e destaque de operadores.</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="simulateDynamicUpdate()" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white font-bold rounded-lg transition-colors shadow-xs">
+          Simular Flutuação de Chamados
+        </button>
+      </div>
+    </div>
+
+    <!-- Live Helpdesk Metrics (Ready for Dimensio Metric Extraction) -->
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-4">
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Chamados Abertos</div>
+        <div id="metric-tickets-abertos" class="text-2xl font-black text-slate-800 mt-1">42 fila</div>
+        <div class="text-[10px] text-slate-400 font-mono mt-0.5">#metric-tickets-abertos</div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">SLA Crítico (&gt;15m)</div>
+        <div id="metric-sla-estourado" class="text-2xl font-black text-red-600 mt-1">3 alertas</div>
+        <div class="text-[10px] text-slate-400 font-mono mt-0.5">#metric-sla-estourado</div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">TMA Médio</div>
+        <div id="metric-tma-minutos" class="text-2xl font-black text-indigo-600 mt-1">08:45 min</div>
+        <div class="text-[10px] text-slate-400 font-mono mt-0.5">#metric-tma-minutos</div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">CSAT Satisfação</div>
+        <div id="metric-csat-percent" class="text-2xl font-black text-emerald-600 mt-1">96.8%</div>
+        <div class="text-[10px] text-slate-400 font-mono mt-0.5">#metric-csat-percent</div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Atendentes Ativos</div>
+        <div id="metric-agentes-logados" class="text-2xl font-black text-blue-600 mt-1">14 online</div>
+        <div class="text-[10px] text-slate-400 font-mono mt-0.5">#metric-agentes-logados</div>
+      </div>
+    </div>
+
+    <!-- Live Queue & Agents Table -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+      <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+        <h3 class="text-xs font-black uppercase tracking-wider text-slate-700">
+          Operadores de Atendimento Escalados (PA / Posição de Atendimento)
+        </h3>
+        <span class="text-[11px] text-slate-500">Filas N1, N2 e Reclame Aqui</span>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-100 text-slate-600 border-b border-slate-200 font-bold">
+            <tr>
+              <th class="p-3">PA / Estação</th>
+              <th class="p-3">Operador(a)</th>
+              <th class="p-3">Fila Designada</th>
+              <th class="p-3">Status Atual</th>
+              <th class="p-3 text-right">Chamados Hoje</th>
+            </tr>
+          </thead>
+          <tbody id="agentsTableBody" class="divide-y divide-slate-100 text-slate-700 font-medium">
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold text-slate-500">PA-01</td>
+              <td class="p-3 font-bold text-slate-900">Camila Andrade (fictícia)</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-violet-100 text-violet-800 text-[10px] font-bold">N1 Geral</span></td>
+              <td class="p-3 text-emerald-600 font-bold">● Em Atendimento</td>
+              <td class="p-3 text-right font-mono font-bold">28</td>
+            </tr>
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold text-slate-500">PA-02</td>
+              <td class="p-3 font-bold text-slate-900">Felipe Rodrigues (fictício)</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-bold">N2 Técnico</span></td>
+              <td class="p-3 text-amber-600 font-bold">⏸ Em Intervalo (Almoço)</td>
+              <td class="p-3 text-right font-mono font-bold">19</td>
+            </tr>
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold text-slate-500">PA-03</td>
+              <td class="p-3 font-bold text-slate-900">Juliana Nogueira (fictícia)</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-red-100 text-red-800 text-[10px] font-bold">Ouvidoria / Procon</span></td>
+              <td class="p-3 text-emerald-600 font-bold">● Em Atendimento</td>
+              <td class="p-3 text-right font-mono font-bold">14</td>
+            </tr>
+            <tr class="hover:bg-slate-50">
+              <td class="p-3 font-mono font-bold text-slate-500">PA-04</td>
+              <td class="p-3 font-bold text-slate-900">Lucas Silveira (fictício)</td>
+              <td class="p-3"><span class="px-2 py-0.5 rounded bg-violet-100 text-violet-800 text-[10px] font-bold">N1 Geral</span></td>
+              <td class="p-3 text-emerald-600 font-bold">● Disponível</td>
+              <td class="p-3 text-right font-mono font-bold">31</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function simulateDynamicUpdate() {
+      const tickets = Math.floor(35 + Math.random() * 20);
+      const sla = Math.floor(Math.random() * 6);
+      const min = String(Math.floor(6 + Math.random() * 4)).padStart(2, '0');
+      const sec = String(Math.floor(Math.random() * 60)).padStart(2, '0');
+      const csat = (95 + Math.random() * 4.5).toFixed(1);
+
+      document.getElementById('metric-tickets-abertos').innerText = tickets + ' fila';
+      document.getElementById('metric-sla-estourado').innerText = sla + ' alertas';
+      document.getElementById('metric-tma-minutos').innerText = min + ':' + sec + ' min';
+      document.getElementById('metric-csat-percent').innerText = csat + '%';
+    }
+  </script>
+</body>
+</html>

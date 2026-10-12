@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { useI18n } from '../i18n';
 import { SingleSelectFilter } from '../components/SingleSelectFilter';
 import { DashboardWidgetsContainer } from '../components/widgets/DashboardWidgetsContainer';
 import { OperationalMonitorPanel } from '../components/OperationalMonitorPanel';
@@ -52,6 +53,7 @@ interface HomeViewProps {
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
+  const { t } = useI18n();
   const [activeHomeTab, setActiveHomeTab] = useState<'overview' | 'monitor'>('overview');
 
   const {
@@ -174,15 +176,15 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
     icon: LucideIcon;
     tone: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'purple';
   }> = [
-    { key: 'presente', label: 'Presentes', value: statusCounts.presente, icon: CheckCircle2, tone: 'success' },
-    { key: 'folga', label: 'Folgas', value: statusCounts.folga, icon: CalendarDays, tone: 'default' },
-    { key: 'ferias', label: 'Férias', value: statusCounts.ferias, icon: Palmtree, tone: 'purple' },
-    { key: 'licenca', label: 'Licença Médica', value: statusCounts.licenca, icon: Stethoscope, tone: 'warning' },
-    { key: 'atestado', label: 'Atestado', value: statusCounts.atestado, icon: FileText, tone: 'info' },
-    { key: 'banco_horas', label: 'Banco de Horas', value: statusCounts.banco_horas, icon: PiggyBank, tone: 'success' },
-    { key: 'falta_injustificada', label: 'Falta Injustificada', value: statusCounts.falta_injustificada, icon: ShieldAlert, tone: 'danger' },
-    { key: 'treinamento', label: 'Treinamento', value: statusCounts.treinamento, icon: BookOpen, tone: 'info' },
-    { key: 'ausente', label: 'Ausentes', value: statusCounts.ausente, icon: UserX, tone: 'danger' },
+    { key: 'presente', label: t('status.present'), value: statusCounts.presente, icon: CheckCircle2, tone: 'success' },
+    { key: 'folga', label: t('status.dayOff'), value: statusCounts.folga, icon: CalendarDays, tone: 'default' },
+    { key: 'ferias', label: t('status.vacation'), value: statusCounts.ferias, icon: Palmtree, tone: 'purple' },
+    { key: 'licenca', label: t('status.license'), value: statusCounts.licenca, icon: Stethoscope, tone: 'warning' },
+    { key: 'atestado', label: t('status.medicalLeave'), value: statusCounts.atestado, icon: FileText, tone: 'info' },
+    { key: 'banco_horas', label: t('status.hoursBank'), value: statusCounts.banco_horas, icon: PiggyBank, tone: 'success' },
+    { key: 'falta_injustificada', label: t('status.unjustified'), value: statusCounts.falta_injustificada, icon: ShieldAlert, tone: 'danger' },
+    { key: 'treinamento', label: t('status.training'), value: statusCounts.treinamento, icon: BookOpen, tone: 'info' },
+    { key: 'ausente', label: t('status.absent'), value: statusCounts.ausente, icon: UserX, tone: 'danger' },
   ];
 
   const hasActiveFilters =
@@ -192,8 +194,8 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
     <div className="space-y-5">
       <PageHeader
         icon={LayoutDashboard}
-        title={`Painel da Operação — ${state.teamName || 'Equipe Principal'}`}
-        subtitle="Acompanhe a disponibilidade da equipe, afastamentos, dimensionamento e escala em tempo real."
+        title={`${t('home.title')} — ${state.teamName || 'Equipe'}`}
+        subtitle={t('home.subtitle')}
         actions={
           <>
             <div className="flex items-center gap-2 bg-[var(--paper)] border border-[var(--line)] px-2.5 py-1.5 rounded-lg shadow-[var(--shadow-card)]">
@@ -210,7 +212,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
                 onClick={() => setSelectedGlobalFilters({ shift: 'ALL', teamLeader: 'ALL' })}
                 className="px-3 py-1.5 bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 text-xs font-bold rounded-lg transition-colors cursor-pointer border border-amber-500/30"
               >
-                Limpar Filtros
+                {t('common.reset')}
               </button>
             )}
           </>
@@ -229,7 +231,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
           }`}
         >
           <LayoutDashboard className="w-4 h-4" />
-          <span>Visão Geral & Indicadores</span>
+          <span>{t('home.overviewTab')}</span>
         </button>
 
         <button
@@ -242,7 +244,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
           }`}
         >
           <Activity className="w-4 h-4 text-indigo-400 animate-pulse" />
-          <span>Monitor Operacional</span>
+          <span>{t('home.monitorTab')}</span>
           <span className="flex h-2 w-2 relative">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>

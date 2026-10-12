@@ -53,6 +53,42 @@
         "lastSeenMs": { "type": "number" },
         "updatedAt": { "type": "string" }
       }
+    },
+    "dimensio_backups": {
+      "title": "Dimensio Backups",
+      "description": "Automated daily and periodic backups saved to Firestore for disaster recovery and protection against spreadsheet corruption",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workspaceId": { "type": "string" },
+        "teamName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "createdDate": { "type": "string" },
+        "createdTime": { "type": "string" },
+        "cadenceType": { "type": "string" },
+        "reason": { "type": "string" },
+        "collaboratorCount": { "type": "number" },
+        "taskCount": { "type": "number" },
+        "breakCount": { "type": "number" },
+        "shiftCount": { "type": "number" },
+        "authorName": { "type": "string" },
+        "stateJson": { "type": "string" },
+        "metadata": { "type": "object" }
+      }
+    }
+  },
+  "firestore": {
+    "/dimensio_workspaces/{workspaceId}": {
+      "schema": "dimensio_workspaces",
+      "description": "Collaborative operational state"
+    },
+    "/dimensio_backups/{backupId}": {
+      "schema": "dimensio_backups",
+      "description": "Automated periodic and daily cloud backups for reliable data recovery"
+    },
+    "/dimensio_user_profiles/{uid}": {
+      "schema": "dimensio_user_profiles",
+      "description": "User profiles and operator settings"
     }
   }
 }

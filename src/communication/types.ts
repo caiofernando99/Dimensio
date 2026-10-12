@@ -15,7 +15,8 @@ export type SignalMessageKind =
   | 'voice_start'
   | 'voice_stop'
   | 'audio_chunk'
-  | 'state_ping';
+  | 'state_ping'
+  | 'speaking';
 
 export interface SignalMessage {
   mid: string;

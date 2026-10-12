@@ -69,6 +69,8 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
     mode,
     setMode,
     speaking,
+    remoteTransmitting,
+    activeSpeakerName,
     startSpeaking,
     stopSpeaking,
     transmissionLocked,
@@ -88,6 +90,11 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
     directChannels,
     openDirectChannel,
     closeDirectChannel,
+    audioOutputDevices,
+    audioOutputDeviceId,
+    isLoudspeaker,
+    setAudioOutputDevice,
+    toggleLoudspeaker,
   } = useCommunication();
   const { state, showNotice, identifiedUser } = useApp();
 
@@ -100,7 +107,7 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
 
   const [showCollabPicker, setShowCollabPicker] = useState(false);
 
-  if (state.showRadioModule === false || isFloating) return null;
+  if (state.showRadioModule === false) return null;
 
   const webhookConfigured = !!state.onlineSpreadsheet?.webhookUrl;
 
@@ -220,11 +227,74 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
     } catch {}
   };
 
-  const onlineCount = (chId: string) => (channelPeers[chId] || []).length + (subscribedChannels.includes(chId) ? 1 : 0);
   const currentActiveChannelObj = channels.find((c) => c.id === activeChannel);
-  const activePeersCount = activeChannel ? (remotePeers[activeChannel] || []).filter((p) => p.status === 'connected').length : 0;
-  // Contagem de quem está realmente no rádio: você + colegas conectados.
+
+  // Unifica colegas descobertos por presença e conexões WebRTC ativas sem perder ninguém
+  const unifiedActivePeers = useMemo(() => {
+    if (!activeChannel) return [];
+    const map = new Map<string, { id: string; name: string; role: string; status: 'connected' | 'connecting' | 'disconnected'; speaking: boolean }>();
+
+    // 1. Colegas presentes no canal (presença / sinalização)
+    (channelPeers[activeChannel] || []).forEach((cp) => {
+      const base = cp.id.split('#')[0];
+      const isAnon = base.startsWith('anon');
+      map.set(base, {
+        id: cp.id,
+        name: cp.name || (isAnon ? 'Operador Convidado (Guest)' : 'Operador'),
+        role: cp.role || (isAnon ? 'Convidado' : 'Operativo'),
+        status: 'connecting',
+        speaking: false,
+      });
+    });
+
+    // 2. Conexões WebRTC ativas (têm precedência para status e voz ao vivo)
+    (remotePeers[activeChannel] || []).forEach((rp) => {
+      const base = rp.id.split('#')[0];
+      const existing = map.get(base);
+      const isAnon = base.startsWith('anon');
+      map.set(base, {
+        id: rp.id,
+        name: rp.name || existing?.name || (isAnon ? 'Operador Convidado (Guest)' : 'Operador'),
+        role: rp.role || existing?.role || (isAnon ? 'Convidado' : 'Operativo'),
+        status: rp.status,
+        speaking: Boolean(rp.speaking),
+      });
+    });
+
+    // 3. Se alguém está transmitindo voz no rádio agora, garantir que apareça imediatamente como Guest ou Operador
+    if (remoteTransmitting && activeSpeakerName) {
+      const isAlreadyVisible = Array.from(map.values()).some((p) => p.speaking || p.name === activeSpeakerName);
+      if (!isAlreadyVisible) {
+        const guestId = `guest_speaking_${activeSpeakerName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+        map.set(guestId, {
+          id: guestId,
+          name: activeSpeakerName,
+          role: activeSpeakerName.includes('Convidado') || activeSpeakerName.includes('Guest') ? 'Convidado' : 'Operativo',
+          status: 'connected',
+          speaking: true,
+        });
+      }
+    }
+
+    return Array.from(map.values());
+  }, [activeChannel, channelPeers, remotePeers, remoteTransmitting, activeSpeakerName]);
+
+  const activePeersCount = unifiedActivePeers.length;
+  // Contagem de quem está realmente no rádio: você + colegas presentes no canal
   const activeTotalCount = activeChannel && subscribedChannels.includes(activeChannel) ? activePeersCount + 1 : activePeersCount;
+
+  const onlineCount = (chId: string) => {
+    const set = new Set<string>();
+    (channelPeers[chId] || []).forEach((p) => {
+      const base = p.id.split('#')[0];
+      if (base) set.add(base);
+    });
+    (remotePeers[chId] || []).forEach((p) => {
+      const base = p.id.split('#')[0];
+      if (base) set.add(base);
+    });
+    return set.size + (subscribedChannels.includes(chId) ? 1 : 0);
+  };
 
   // Abre um canal direto com um colega a partir do próprio rádio.
   const openDirectWith = (collabId: string, name: string) => {
@@ -243,7 +313,7 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
   // Resolve o colaborador associado a um peer do rádio (id `collabId#instância`).
   const collabForPeer = (peerId: string) => {
     const base = String(peerId).split('#')[0];
-    if (!base || base === 'anon') return undefined;
+    if (!base || base === 'anon' || base.startsWith('anon')) return undefined;
     return state.collaborators.find((c) => c.id === base || c.login === base || c.registration === base);
   };
 
@@ -289,38 +359,55 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
     );
   };
 
-  // Faixa que indica claramente em qual canal o rádio está falando agora.
+  // Faixa que indica claramente em qual canal o rádio está falando agora e quem está transmitindo
   const renderActiveChannelIndicator = () => {
-    if (!currentActiveChannelObj) return null;
     return (
-      <div
-        className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border text-[11px] font-black uppercase tracking-wide ${
-          currentActiveChannelObj.kind === 'direct'
-            ? 'bg-sky-500/10 border-sky-500/40 text-sky-700 dark:text-sky-300'
-            : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
-        }`}
-      >
-        <span className="flex items-center gap-1.5 min-w-0">
-          <Radio className={`w-3.5 h-3.5 shrink-0 ${speaking ? 'animate-pulse' : ''}`} />
-          <span className="truncate">
-            Transmitindo no canal: <strong>{currentActiveChannelObj.label}</strong>
-          </span>
-          {currentActiveChannelObj.kind === 'direct' && (
-            <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-black uppercase shrink-0">
-              Direto
+      <div className="space-y-1.5">
+        {remoteTransmitting && (
+          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-rose-500/40 bg-rose-500/15 text-rose-700 dark:text-rose-300 text-xs font-black uppercase tracking-wide animate-pulse shadow-sm">
+            <span className="flex items-center gap-2 truncate">
+              <Mic className="w-4 h-4 text-rose-500 animate-bounce shrink-0" />
+              <span className="truncate">
+                🎙️ <strong>{activeSpeakerName || 'Colega de Equipe'}</strong> transmitindo voz ao vivo...
+              </span>
             </span>
-          )}
-        </span>
-        {currentActiveChannelObj.kind === 'direct' && (
-          <button
-            type="button"
-            onClick={endActiveDirectChannel}
-            className="px-2 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[9.5px] font-black flex items-center gap-1 shrink-0 cursor-pointer transition-colors"
-            title="Encerrar este canal direto"
+            <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[9px] font-mono shrink-0">
+              NO AR
+            </span>
+          </div>
+        )}
+
+        {currentActiveChannelObj && (
+          <div
+            className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border text-[11px] font-black uppercase tracking-wide ${
+              currentActiveChannelObj.kind === 'direct'
+                ? 'bg-sky-500/10 border-sky-500/40 text-sky-700 dark:text-sky-300'
+                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+            }`}
           >
-            <PhoneOff className="w-3 h-3" />
-            Encerrar
-          </button>
+            <span className="flex items-center gap-1.5 min-w-0">
+              <Radio className={`w-3.5 h-3.5 shrink-0 ${speaking ? 'animate-pulse' : ''}`} />
+              <span className="truncate">
+                Transmitindo no canal: <strong>{currentActiveChannelObj.label}</strong>
+              </span>
+              {currentActiveChannelObj.kind === 'direct' && (
+                <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-black uppercase shrink-0">
+                  Direto
+                </span>
+              )}
+            </span>
+            {currentActiveChannelObj.kind === 'direct' && (
+              <button
+                type="button"
+                onClick={endActiveDirectChannel}
+                className="px-2 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[9.5px] font-black flex items-center gap-1 shrink-0 cursor-pointer transition-colors"
+                title="Encerrar este canal direto"
+              >
+                <PhoneOff className="w-3 h-3" />
+                Encerrar
+              </button>
+            )}
+          </div>
         )}
       </div>
     );
@@ -527,33 +614,68 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
               </button>
             </div>
 
-            {/* Volume Control */}
-            <div className="flex items-center gap-2 bg-[var(--surface-2)] border border-[var(--line)] px-3 py-1.5 rounded-xl">
-              <button
-                type="button"
-                onClick={() => setVolume(volume > 0 ? 0 : 1)}
-                className="text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer"
-                title={volume === 0 ? 'Desmutar alto-falante' : 'Mutar alto-falante'}
-              >
-                {volume === 0 ? (
-                  <VolumeX className="w-4 h-4 text-rose-500" />
-                ) : (
-                  <Volume2 className="w-4 h-4 text-[var(--primary)]" />
+            {/* Volume & Viva-Voz / Alto-Falante Control */}
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--surface-2)] border border-[var(--line)] p-2 rounded-xl">
+              <div className="flex items-center gap-2 flex-1 min-w-[150px]">
+                <button
+                  type="button"
+                  onClick={() => setVolume(volume > 0 ? 0 : 1)}
+                  className="text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer shrink-0"
+                  title={volume === 0 ? 'Desmutar alto-falante' : 'Mutar alto-falante'}
+                >
+                  {volume === 0 ? (
+                    <VolumeX className="w-4 h-4 text-rose-500" />
+                  ) : (
+                    <Volume2 className="w-4 h-4 text-[var(--primary)]" />
+                  )}
+                </button>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={volume}
+                  onChange={(e) => setVolume(parseFloat(e.target.value))}
+                  className="w-full h-1.5 bg-[var(--line)] rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                  title={`Volume do Rádio: ${Math.round(volume * 100)}%`}
+                />
+                <span className="text-[10px] font-mono font-bold text-[var(--muted)] w-8 text-right shrink-0">
+                  {Math.round(volume * 100)}%
+                </span>
+              </div>
+
+              {/* Viva-Voz / Saída de Alto-falante */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={toggleLoudspeaker}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black flex items-center gap-1.5 cursor-pointer transition-all ${
+                    isLoudspeaker
+                      ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/40 shadow-xs'
+                      : 'bg-[var(--bg)] text-[var(--muted)] border border-[var(--line)] hover:text-[var(--ink)]'
+                  }`}
+                  title={isLoudspeaker ? 'Viva-Voz ativo (alto-falante potente)' : 'Modo auricular/chamada (clique para ativar Viva-Voz)'}
+                >
+                  {isLoudspeaker ? <Volume2 className="w-3.5 h-3.5 text-emerald-500" /> : <Headphones className="w-3.5 h-3.5" />}
+                  <span>{isLoudspeaker ? '🔊 Viva-Voz' : 'Auricular'}</span>
+                </button>
+
+                {audioOutputDevices.length > 0 && (
+                  <select
+                    value={audioOutputDeviceId}
+                    onChange={(e) => setAudioOutputDevice(e.target.value)}
+                    className="px-2 py-1 rounded-lg border border-[var(--line)] bg-[var(--bg)] text-[10px] font-bold text-[var(--ink)] outline-none cursor-pointer max-w-[130px] truncate"
+                    title="Dispositivo de saída de áudio"
+                  >
+                    <option value="default">Alto-falante Padrão</option>
+                    {audioOutputDevices.map((d) => (
+                      <option key={d.deviceId} value={d.deviceId}>
+                        {d.label || `Saída ${d.deviceId.slice(0, 5)}...`}
+                      </option>
+                    ))}
+                  </select>
                 )}
-              </button>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={volume}
-                onChange={(e) => setVolume(parseFloat(e.target.value))}
-                className="w-full h-1.5 bg-[var(--line)] rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                title={`Volume do Rádio: ${Math.round(volume * 100)}%`}
-              />
-              <span className="text-[10px] font-mono font-bold text-[var(--muted)] w-8 text-right shrink-0">
-                {Math.round(volume * 100)}%
-              </span>
+              </div>
             </div>
           </div>
 
@@ -562,43 +684,99 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
 
           {/* MAIN PTT HOLD-TO-TALK BUTTON (LARGE TOUCH-FRIENDLY BUTTON) */}
           {mode === 'ptt' ? (
-            <button
-              type="button"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                if (transmissionLocked) {
-                  setTransmissionLocked(!speaking);
-                } else {
-                  startSpeaking();
-                }
-              }}
-              onPointerUp={transmissionLocked ? undefined : stopSpeaking}
-              onPointerLeave={transmissionLocked ? undefined : stopSpeaking}
-              onPointerCancel={transmissionLocked ? undefined : stopSpeaking}
-              className={`w-full py-6 sm:py-7 px-4 rounded-2xl font-black text-sm sm:text-base uppercase tracking-wider cursor-pointer select-none transition-all duration-100 border flex flex-col sm:flex-row items-center justify-center gap-2.5 shadow-lg active:scale-[0.98] ${
-                speaking
-                  ? 'bg-rose-600 text-white border-rose-400 ring-8 ring-rose-500/30 animate-pulse scale-[1.01]'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 hover:shadow-emerald-500/25'
-              }`}
-            >
-              {speaking ? (
-                <>
-                  <Mic className="w-6 h-6 animate-bounce text-white" />
-                  <span className="text-base sm:text-lg font-black tracking-widest">
-                    {transmissionLocked ? '● TRANSMITINDO (MODO CONTÍNUO)' : '● TRANSMITINDO VOZ...'}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <Mic className="w-6 h-6 text-emerald-200" />
-                  <span className="font-extrabold">
-                    {transmissionLocked
-                      ? 'TOQUE PARA INICIAR TRANSMISSÃO'
-                      : 'SEGURE PARA FALAR (APERTE E FALE)'}
-                  </span>
-                </>
-              )}
-            </button>
+            <div className="space-y-2">
+              <button
+                type="button"
+                onContextMenu={(e) => e.preventDefault()}
+                onPointerMove={(e) => e.preventDefault()}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  try {
+                    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                  } catch {}
+                  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                    try { navigator.vibrate(50); } catch {}
+                  }
+                  if (transmissionLocked) {
+                    if (speaking) {
+                      stopSpeaking();
+                    } else {
+                      startSpeaking();
+                    }
+                  } else {
+                    startSpeaking();
+                  }
+                }}
+                onPointerUp={(e) => {
+                  try {
+                    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+                  } catch {}
+                  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                    try { navigator.vibrate(25); } catch {}
+                  }
+                  if (!transmissionLocked) {
+                    stopSpeaking();
+                  }
+                }}
+                onPointerCancel={(e) => {
+                  try {
+                    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+                  } catch {}
+                  if (!transmissionLocked) {
+                    setTimeout(() => {
+                      if (!transmissionLocked) stopSpeaking();
+                    }, 250);
+                  }
+                }}
+                style={{ touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+                className={`w-full py-6 sm:py-7 px-4 rounded-2xl font-black text-sm sm:text-base uppercase tracking-wider cursor-pointer select-none touch-none transition-all duration-100 border flex flex-col sm:flex-row items-center justify-center gap-2.5 shadow-lg active:scale-[0.98] ${
+                  speaking
+                    ? 'bg-rose-600 text-white border-rose-400 ring-8 ring-rose-500/30 animate-pulse scale-[1.01]'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 hover:shadow-emerald-500/25'
+                }`}
+              >
+                {speaking ? (
+                  <>
+                    <Mic className="w-6 h-6 animate-bounce text-white" />
+                    <span className="text-base sm:text-lg font-black tracking-widest">
+                      {transmissionLocked ? '● TRANSMITINDO (MODO TRAVADO)' : '● TRANSMITINDO VOZ...'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Mic className="w-6 h-6 text-emerald-200" />
+                    <span className="font-extrabold">
+                      {transmissionLocked
+                        ? 'TOQUE PARA INICIAR TRANSMISSÃO'
+                        : 'SEGURE PARA FALAR (APERTE E FALE)'}
+                    </span>
+                  </>
+                )}
+              </button>
+
+              {/* Touchscreen Lock Toggle */}
+              <div className="flex items-center justify-between gap-2 px-1">
+                <span className="text-[11px] text-[var(--muted)] font-bold">
+                  {transmissionLocked
+                    ? '🔒 Microfone travado: falando com as mãos livres.'
+                    : '💡 Touchscreen: use "Travar" para falar sem segurar a tela.'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setTransmissionLocked(!transmissionLocked)}
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-black flex items-center gap-1.5 cursor-pointer transition-all shrink-0 ${
+                    transmissionLocked
+                      ? 'bg-rose-500 text-white border-rose-400 shadow-sm'
+                      : 'bg-[var(--surface-2)] border-[var(--line)] text-[var(--ink)] hover:border-[var(--primary)]'
+                  }`}
+                  title={transmissionLocked ? 'Destravar microfone contínuo' : 'Travar microfone para falar com as mãos livres'}
+                >
+                  <Radio className={`w-3.5 h-3.5 ${transmissionLocked ? 'animate-pulse' : ''}`} />
+                  <span>{transmissionLocked ? 'Destravar' : 'Travar Microfone'}</span>
+                </button>
+              </div>
+            </div>
           ) : (
             <div
               className={`w-full py-5 rounded-2xl font-black text-sm uppercase tracking-wide border text-center transition-colors ${
@@ -651,26 +829,39 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
               <div className="p-3">
                 {activePeersCount > 0 ? (
                   <div className="flex flex-wrap gap-2">
-                    {remotePeers[activeChannel]?.map((p) => {
+                    {unifiedActivePeers.map((p) => {
                       const peerCollab = collabForPeer(p.id);
+                      const isGuest = !peerCollab && (p.id.startsWith('anon') || p.role === 'Convidado');
+                      const displayName = peerCollab?.name || p.name || (isGuest ? 'Operador Convidado' : 'Operador');
+                      const displayRole = peerCollab?.role || p.role || (isGuest ? 'Convidado' : 'Operativo');
+
                       return (
                         <div
                           key={p.id}
                           onContextMenu={peerCollab ? collabMenuOnContext(peerCollab.id) : undefined}
-                          className="px-2.5 py-1 rounded-lg bg-[var(--paper)] border border-[var(--line)] flex items-center gap-2 text-xs cursor-default"
-                          title={peerCollab ? 'Clique com o botão direito para opções do colaborador' : undefined}
+                          className={`px-2.5 py-1.5 rounded-lg border flex items-center gap-2 text-xs transition-all ${
+                            p.speaking
+                              ? 'bg-rose-500/15 border-rose-500 text-rose-700 dark:text-rose-300 ring-2 ring-rose-400 font-black animate-pulse'
+                              : 'bg-[var(--paper)] border-[var(--line)]'
+                          }`}
+                          title={peerCollab ? 'Clique com o botão direito para opções do colaborador' : isGuest ? 'Operador Convidado / Não autenticado' : undefined}
                         >
                           <span
                             className={`w-2 h-2 rounded-full ${
-                              p.status === 'connected'
+                              p.speaking
+                                ? 'bg-rose-500 animate-ping'
+                                : p.status === 'connected'
                                 ? 'bg-emerald-500'
                                 : p.status === 'connecting'
                                 ? 'bg-amber-400 animate-pulse'
                                 : 'bg-slate-400'
                             }`}
                           />
-                          <span className="font-black text-[var(--ink)]">{p.name}</span>
-                          <span className="text-[10px] text-[var(--muted)] font-mono">({p.role || 'Op'})</span>
+                          {p.speaking && <Mic className="w-3.5 h-3.5 text-rose-500 animate-bounce" />}
+                          <span className="font-black text-[var(--ink)]">{displayName}</span>
+                          <span className={`text-[10px] font-mono ${isGuest ? 'text-amber-600 dark:text-amber-400 font-bold' : 'text-[var(--muted)]'}`}>
+                            ({isGuest ? 'Guest' : displayRole})
+                          </span>
                         </div>
                       );
                     })}
@@ -852,18 +1043,43 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
 
             {/* PTT HOLD-TO-TALK BUTTON (COMPACT STREAMLINED STYLE) */}
             <button
+              onContextMenu={(e) => e.preventDefault()}
+              onPointerMove={(e) => e.preventDefault()}
               onPointerDown={(e) => {
                 e.preventDefault();
+                e.stopPropagation();
+                try {
+                  (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                } catch {}
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                  try { navigator.vibrate(40); } catch {}
+                }
                 if (transmissionLocked) {
                   setTransmissionLocked(!speaking);
                 } else {
                   startSpeaking();
                 }
               }}
-              onPointerUp={transmissionLocked ? undefined : stopSpeaking}
-              onPointerLeave={transmissionLocked ? undefined : stopSpeaking}
-              onPointerCancel={transmissionLocked ? undefined : stopSpeaking}
-              className={`w-full py-3 px-2 rounded-xl font-black text-[11px] uppercase tracking-wider cursor-pointer select-none transition-all duration-100 border flex items-center justify-center gap-2 shadow-md active:scale-[0.97] ${
+              onPointerUp={(e) => {
+                try {
+                  (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+                } catch {}
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                  try { navigator.vibrate(20); } catch {}
+                }
+                if (!transmissionLocked) {
+                  stopSpeaking();
+                }
+              }}
+              onPointerCancel={(e) => {
+                try {
+                  (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+                } catch {}
+                if (!transmissionLocked) {
+                  stopSpeaking();
+                }
+              }}
+              className={`w-full py-3 px-2 rounded-xl font-black text-[11px] uppercase tracking-wider cursor-pointer select-none touch-none transition-all duration-100 border flex items-center justify-center gap-2 shadow-md active:scale-[0.97] ${
                 speaking
                   ? 'bg-rose-600 text-white border-rose-400 ring-4 ring-rose-500/30 animate-pulse scale-[1.02]'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 hover:shadow-emerald-500/20'
@@ -1217,29 +1433,41 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
                 </div>
                 {activePeersCount ? (
                   <div className="divide-y divide-[var(--line)] max-h-32 overflow-y-auto">
-                    {remotePeers[activeChannel]?.map((p) => {
+                    {unifiedActivePeers.map((p) => {
                       const peerCollab = collabForPeer(p.id);
+                      const isGuest = !peerCollab && (p.id.startsWith('anon') || p.role === 'Convidado');
+                      const displayName = peerCollab?.name || p.name || (isGuest ? 'Operador Convidado' : 'Operador');
+                      const displayRole = peerCollab?.role || p.role || (isGuest ? 'Guest' : 'Colaborador');
                       return (
                         <div
                           key={p.id}
                           onContextMenu={peerCollab ? collabMenuOnContext(peerCollab.id) : undefined}
-                          className="flex items-center justify-between px-2.5 py-1.5 cursor-default"
-                          title={peerCollab ? 'Clique com o botão direito para opções do colaborador' : undefined}
+                          className={`flex items-center justify-between px-2.5 py-1.5 cursor-default transition-colors ${
+                            p.speaking ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 font-bold' : ''
+                          }`}
+                          title={peerCollab ? 'Clique com o botão direito para opções do colaborador' : isGuest ? 'Operador Convidado' : undefined}
                         >
-                          <div className="min-w-0">
-                            <div className="truncate font-bold text-[var(--ink)]">{p.name}</div>
-                            <div className="text-[10px] text-[var(--muted)]">{p.role || 'Colaborador'}</div>
+                          <div className="min-w-0 flex items-center gap-1.5">
+                            {p.speaking && <Mic className="w-3 h-3 text-rose-500 animate-bounce shrink-0" />}
+                            <div className="truncate">
+                              <div className="truncate font-bold text-[var(--ink)]">{displayName}</div>
+                              <div className="text-[10px] text-[var(--muted)]">{displayRole}</div>
+                            </div>
                           </div>
                           <span
-                            className={`w-2 h-2 rounded-full ${
-                              p.status === 'connected'
+                            className={`w-2 h-2 rounded-full shrink-0 ${
+                              p.speaking
+                                ? 'bg-rose-500 animate-ping'
+                                : p.status === 'connected'
                                 ? 'bg-emerald-500'
                                 : p.status === 'connecting'
                                 ? 'bg-amber-400 animate-pulse'
                                 : 'bg-slate-300 dark:bg-slate-600'
                             }`}
                             title={
-                              p.status === 'connected'
+                              p.speaking
+                                ? 'Transmitindo voz agora'
+                                : p.status === 'connected'
                                 ? 'Conectado'
                                 : p.status === 'connecting'
                                 ? 'Conectando...'
@@ -1266,30 +1494,63 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
             {/* PTT Main Action Button */}
             {mode === 'ptt' ? (
               <button
+                type="button"
+                onContextMenu={(e) => e.preventDefault()}
+                onPointerMove={(e) => e.preventDefault()}
                 onPointerDown={(e) => {
                   e.preventDefault();
+                  e.stopPropagation();
+                  try {
+                    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                  } catch {}
+                  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                    try { navigator.vibrate(50); } catch {}
+                  }
                   if (transmissionLocked) {
-                    setTransmissionLocked(!speaking);
+                    if (speaking) {
+                      stopSpeaking();
+                    } else {
+                      startSpeaking();
+                    }
                   } else {
                     startSpeaking();
                   }
                 }}
-                onPointerUp={transmissionLocked ? undefined : stopSpeaking}
-                onPointerLeave={transmissionLocked ? undefined : stopSpeaking}
-                onPointerCancel={transmissionLocked ? undefined : stopSpeaking}
-                className={`w-full py-3.5 rounded-2xl font-black text-xs uppercase tracking-wide cursor-pointer select-none transition-all active:scale-[0.98] border ${
+                onPointerUp={(e) => {
+                  try {
+                    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+                  } catch {}
+                  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                    try { navigator.vibrate(25); } catch {}
+                  }
+                  if (!transmissionLocked) {
+                    stopSpeaking();
+                  }
+                }}
+                onPointerCancel={(e) => {
+                  try {
+                    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+                  } catch {}
+                  if (!transmissionLocked) {
+                    setTimeout(() => {
+                      if (!transmissionLocked) stopSpeaking();
+                    }, 250);
+                  }
+                }}
+                style={{ touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+                className={`w-full py-3.5 rounded-2xl font-black text-xs uppercase tracking-wide cursor-pointer select-none touch-none transition-all active:scale-[0.98] border ${
                   speaking
                     ? 'bg-rose-600 text-white border-rose-400 shadow-lg animate-pulse'
                     : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 shadow-2xs'
                 }`}
-                title={transmissionLocked ? 'Transmissão contínua ativa' : 'Segure para falar'}
+                title={transmissionLocked ? 'Modo Alternar: toque para ligar/desligar transmissão' : 'Segure para falar'}
               >
                 <span className="flex items-center justify-center gap-2">
                   {speaking ? <Mic className="w-4 h-4 animate-bounce" /> : <MicOff className="w-4 h-4" />}
                   {speaking
-                    ? 'Transmitindo Voz...'
+                    ? (transmissionLocked ? 'NO AR (TOQUE P/ PARAR)' : 'Transmitindo Voz...')
                     : transmissionLocked
-                    ? 'Toque para Transmitir'
+                    ? 'Toque para Falar'
                     : 'Segure para Falar (PTT)'}
                 </span>
               </button>

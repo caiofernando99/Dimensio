@@ -58,6 +58,5 @@ describe('stateNormalizer', () => {
     expect(result.helpdeskConfig).toBeDefined();
     expect(result.helpdeskConfig.enabled).toBe(true);
     expect(Array.isArray(result.helpdeskConfig.supportTypes)).toBe(true);
-    expect(result.helpdeskConfig.supportTypes!.length).toBeGreaterThan(0);
   });
 });

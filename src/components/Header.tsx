@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { Calendar as CalendarIcon, Menu, Cloud, UserCheck, Bell, User, Clock, Globe, BookOpen, Database } from 'lucide-react';
+import { Calendar as CalendarIcon, Menu, Cloud, UserCheck, Bell, User, Clock, Globe, BookOpen, Database, LogOut } from 'lucide-react';
 import { GlobalSearch } from './GlobalSearch';
 import { UserIdentifyModal } from './UserIdentifyModal';
 import { UserNotificationsModal } from './UserNotificationsModal';
+import { LogoutModal } from './LogoutModal';
 import { SwDiagnosticIndicator } from './SwDiagnosticIndicator';
 import { updateCloudPresence, subscribeToCloudPresence, CloudPresenceUser } from '../lib/firestoreStorage';
 import { useI18n } from '../i18n';
@@ -17,8 +18,9 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggleMobileMenu, onOpenShiftModal }) => {
   const { state, setDate, identifiedUser, getUnreadNotificationsCount } = useApp();
-  const { t, language, setLanguage, availableLanguages } = useI18n();
+  const { t } = useI18n();
   const [isIdentifyModalOpen, setIsIdentifyModalOpen] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const [isNotifModalOpen, setIsNotifModalOpen] = useState(false);
   const [onlineLeaders, setOnlineLeaders] = useState<CloudPresenceUser[]>([]);
 
@@ -180,22 +182,16 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
             <span className="max-w-[70px] truncate">{identifiedUser ? identifiedUser.name : t('header.identify')}</span>
           </button>
 
-          {/* Language Selector */}
-          <div className="relative flex items-center shrink-0">
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value as any)}
-              className="px-2 py-1 rounded-lg border border-[var(--line)] bg-[var(--bg)] text-[10.5px] font-black text-[var(--ink)] outline-none hover:border-[var(--primary)] transition-colors cursor-pointer appearance-none shadow-2xs"
-              aria-label="Idioma do Sistema"
-              title="Alterar idioma da plataforma (PT / ES / EN)"
-            >
-              {availableLanguages.map((l) => (
-                <option key={l.code} value={l.code}>
-                  {l.flag} {l.code.toUpperCase()}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Botão Sair da Sessão / Limpar Coletor */}
+          <button
+            type="button"
+            onClick={() => setIsLogoutModalOpen(true)}
+            className="flex px-2 py-1 rounded-lg text-[10.5px] font-extrabold items-center gap-1 transition-colors cursor-pointer border border-rose-200 dark:border-rose-900/50 bg-rose-50/60 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/60 shadow-2xs shrink-0"
+            title="Sair da sessão, desconectar rádio e limpar presença deste dispositivo"
+          >
+            <LogOut className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline">Sair</span>
+          </button>
 
           {/* Notifications */}
           <button
@@ -228,6 +224,7 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
 
       <UserIdentifyModal isOpen={isIdentifyModalOpen} onClose={() => setIsIdentifyModalOpen(false)} />
       <UserNotificationsModal isOpen={isNotifModalOpen} onClose={() => setIsNotifModalOpen(false)} />
+      <LogoutModal isOpen={isLogoutModalOpen} onClose={() => setIsLogoutModalOpen(false)} />
     </header>
   );
 };

@@ -45,16 +45,6 @@ interface SupportCodeDispatcherProps {
   isPortalView?: boolean;
 }
 
-const DEFAULT_SUPPORT_PRESETS: SupportTypePreset[] = [
-  { id: 'preset_coletor', name: 'Problema no Coletor / Equipamento', priority: 'alta', description: '📱' },
-  { id: 'preset_sistema', name: 'Suporte Técnico / Sistema', priority: 'media', description: '💻' },
-  { id: 'preset_tarefa', name: 'Ajuste de Tarefa / Troca', priority: 'media', description: '🔄' },
-  { id: 'preset_processo', name: 'Dúvida de Processo / Qualidade', priority: 'baixa', description: '❓' },
-  { id: 'preset_tl', name: 'Liberação / Autorização TL', priority: 'alta', description: '🔑' },
-  { id: 'preset_etiqueta', name: 'Troca de Etiqueta / Impressora', priority: 'media', description: '🏷️' },
-  { id: 'preset_outros', name: 'Outros Assuntos', priority: 'baixa', description: '💬' },
-];
-
 export const SupportCodeDispatcher: React.FC<SupportCodeDispatcherProps> = ({
   taskId,
   taskName,
@@ -73,11 +63,9 @@ export const SupportCodeDispatcher: React.FC<SupportCodeDispatcherProps> = ({
     showNotice,
   } = useApp();
 
-  const presets = state.helpdeskConfig?.supportTypes && state.helpdeskConfig.supportTypes.length > 0
-    ? state.helpdeskConfig.supportTypes
-    : DEFAULT_SUPPORT_PRESETS;
+  const presets = state.helpdeskConfig?.supportTypes || [];
 
-  const [selectedType, setSelectedType] = useState<string>(presets[0]?.name || 'Problema no Coletor / Equipamento');
+  const [selectedType, setSelectedType] = useState<string>(() => presets[0]?.name || '');
   const [codeText, setCodeText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -86,6 +74,12 @@ export const SupportCodeDispatcher: React.FC<SupportCodeDispatcherProps> = ({
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [copiedFieldId, setCopiedFieldId] = useState<string | null>(null);
   const [copiedAllId, setCopiedAllId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (presets.length > 0 && !presets.some((p) => p.name === selectedType)) {
+      setSelectedType(presets[0]?.name || 'Chamado Geral');
+    }
+  }, [presets, selectedType]);
 
   const selectedPreset = presets.find((p) => p.name === selectedType) || presets[0];
   const activeFields = selectedPreset?.fields || [];
@@ -340,30 +334,45 @@ export const SupportCodeDispatcher: React.FC<SupportCodeDispatcherProps> = ({
         {/* Support Type Presets Selector */}
         <div className="space-y-1.5">
           <label className="block text-[10.5px] font-black uppercase tracking-wider text-[var(--muted)]">
-            Selecione o Tipo do Pedido:
+            {presets.length > 0 ? 'Selecione o Tipo do Pedido:' : 'Motivo / Título do Chamado:'}
           </label>
-          <div className="flex flex-wrap gap-1.5">
-            {presets.map((preset) => {
-              const isSelected = selectedType === preset.name;
-              return (
-                <button
-                  key={preset.id || preset.name}
-                  type="button"
-                  onClick={() => {
-                    setSelectedType(preset.name);
-                    setFieldValues({});
-                  }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border ${
-                    isSelected
-                      ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow-2xs scale-[1.02]'
-                      : 'bg-[var(--bg)] border-[var(--line)] text-[var(--ink)] hover:border-[var(--primary)]'
-                  }`}
-                >
-                  <span>{preset.name}</span>
-                </button>
-              );
-            })}
-          </div>
+          {presets.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {presets.map((preset) => {
+                const isSelected = selectedType === preset.name;
+                return (
+                  <button
+                    key={preset.id || preset.name}
+                    type="button"
+                    onClick={() => {
+                      setSelectedType(preset.name);
+                      setFieldValues({});
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border ${
+                      isSelected
+                        ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow-2xs scale-[1.02]'
+                        : 'bg-[var(--bg)] border-[var(--line)] text-[var(--ink)] hover:border-[var(--primary)]'
+                    }`}
+                  >
+                    <span>{preset.name}</span>
+                    {preset.priority && (
+                      <span className="text-[9px] opacity-75 uppercase font-mono">
+                        ({preset.priority})
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <input
+              type="text"
+              value={selectedType}
+              onChange={(e) => setSelectedType(e.target.value)}
+              placeholder="Digite o motivo do chamado (ex.: Apoio Operacional, Dúvida...)"
+              className="w-full px-3 py-2 text-xs bg-[var(--bg)] border border-[var(--line)] rounded-xl text-[var(--ink)] font-bold focus:outline-none focus:border-[var(--primary)]"
+            />
+          )}
         </div>
 
         {/* Task selector contextualized by identification */}

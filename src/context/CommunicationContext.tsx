@@ -6,7 +6,9 @@ import { playRadioPttChirp, setRadioSfxConfig, getRadioSfxConfig } from '../util
 import { showNativeOSNotification } from '../utils/notifications';
 import { loadRadioStateDB, saveRadioStateDB } from '../utils/radioStoreDB';
 import { triggerRadioBackgroundSync } from '../registerSW';
+import { mediaKeepalive } from '../utils/mediaKeepalive';
 import {
+  isFirestoreQuotaExceeded,
   sendFirestoreRadioSignals,
   subscribeToFirestoreRadioSignals,
   updateRadioCloudPresence,
@@ -35,6 +37,7 @@ export interface CommContextType {
   setMode: (m: AudioMode) => void;
   speaking: boolean;
   remoteTransmitting: boolean;
+  activeSpeakerName: string | null;
   startSpeaking: () => void;
   stopSpeaking: () => void;
   transmissionLocked: boolean;
@@ -57,6 +60,12 @@ export interface CommContextType {
   openDirectChannel: (collabId: string, name: string) => void;
   closeDirectChannel: (collabId: string) => void;
   leaveAll: () => void;
+  audioOutputDevices: MediaDeviceInfo[];
+  audioOutputDeviceId: string;
+  isLoudspeaker: boolean;
+  setAudioOutputDevice: (deviceId: string) => Promise<boolean>;
+  toggleLoudspeaker: () => Promise<boolean>;
+  refreshAudioOutputDevices: () => Promise<void>;
 }
 
 const CommContext = createContext<CommContextType | undefined>(undefined);
@@ -105,7 +114,7 @@ function buildRtcConfig(customTurn: string | undefined): RTCConfiguration {
 
 const POLL_MS = 2500;
 const HEARTBEAT_MS = 8000;
-const PEER_TTL_MS = 120000;
+const PEER_TTL_MS = 18000; // 18s TTL elimina imediatamente colaboradores fantasmas
 const SEEN_PRUNE = 4000;
 const RETRY_INTERVAL_MS = 4000;
 const VOICE_THRESHOLD = 0.015;
@@ -194,6 +203,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   const [remotePeersMap, setRemotePeersMap] = useState<Record<string, RemotePeerState[]>>({});
   const [directChannels, setDirectChannels] = useState<Record<string, CommChannel>>({});
   const [remoteTransmitting, setRemoteTransmitting] = useState(false);
+  const [activeSpeakerName, setActiveSpeakerName] = useState<string | null>(null);
   const [mode, setMode] = useState<AudioMode>('ptt');
   const [speaking, setSpeaking] = useState(false);
   const [transmissionLocked, setTransmissionLockedState] = useState<boolean>(() => {
@@ -216,17 +226,96 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   const [micLevel, setMicLevel] = useState(0);
   const [isTestingLoopback, setIsTestingLoopback] = useState(false);
 
-  const instanceIdRef = useRef<string>(Math.random().toString(36).substring(2, 8));
-  const initialBaseId = identifiedUser ? String(identifiedUser.collaboratorId || identifiedUser.id) : 'anon';
-  const peerIdRef = useRef<string>(`${initialBaseId}#${instanceIdRef.current}`);
-  const peerNameRef = useRef<string>(identifiedUser?.name || 'Operador em Turno');
-  const peerRoleRef = useRef<string>(identifiedUser?.role || 'Operativo');
+  // Audio output device & loudspeaker (viva-voz) selection
+  const [audioOutputDevices, setAudioOutputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [audioOutputDeviceId, setAudioOutputDeviceIdState] = useState<string>(() => {
+    try {
+      return localStorage.getItem('dimensio_audio_output_id') || 'default';
+    } catch {
+      return 'default';
+    }
+  });
+  const [isLoudspeaker, setIsLoudspeaker] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('dimensio_audio_loudspeaker') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const audioOutputDeviceIdRef = useRef(audioOutputDeviceId);
+  const isLoudspeakerRef = useRef(isLoudspeaker);
+
+  const instanceIdRef = useRef<string>((() => {
+    try {
+      const existing = typeof localStorage !== 'undefined'
+        ? localStorage.getItem('dimensio_radio_instance_id')
+        : typeof sessionStorage !== 'undefined'
+        ? sessionStorage.getItem('dimensio_radio_instance_id')
+        : null;
+      if (existing) return existing;
+      const created = Math.random().toString(36).substring(2, 8);
+      if (typeof localStorage !== 'undefined') localStorage.setItem('dimensio_radio_instance_id', created);
+      return created;
+    } catch {
+      return Math.random().toString(36).substring(2, 8);
+    }
+  })());
+
+  // Resolves operator identity either from identifiedUser or Portal localStorage
+  const resolveCurrentIdentity = useCallback(() => {
+    if (identifiedUser && identifiedUser.id && identifiedUser.id !== 'unauthenticated') {
+      return {
+        id: String(identifiedUser.collaboratorId || identifiedUser.id),
+        name: identifiedUser.name || 'Operador em Turno',
+        role: identifiedUser.role || 'Operativo',
+      };
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('dimensio_portal_operator_id');
+        if (saved) {
+          let opId = saved;
+          if (saved.startsWith('{')) {
+            const parsed = JSON.parse(saved);
+            opId = parsed?.id || '';
+          }
+          if (opId) {
+            const found = state.collaborators.find(
+              (c) => c.id === opId || c.login === opId || c.registration === opId
+            );
+            if (found) {
+              return {
+                id: String(found.id),
+                name: found.name || 'Operador em Turno',
+                role: found.role || 'Operativo',
+              };
+            }
+            return {
+              id: String(opId),
+              name: `Operador #${opId}`,
+              role: 'Operativo',
+            };
+          }
+        }
+      } catch {}
+    }
+    return {
+      id: `anon_${instanceIdRef.current}`,
+      name: 'Operador Visitante',
+      role: 'Convidado',
+    };
+  }, [identifiedUser, state.collaborators]);
+
+  const initialIdentity = resolveCurrentIdentity();
+  const peerIdRef = useRef<string>(`${initialIdentity.id}#${instanceIdRef.current}`);
+  const peerNameRef = useRef<string>(initialIdentity.name);
+  const peerRoleRef = useRef<string>(initialIdentity.role);
 
   // Keep identity refs synchronized synchronously
-  const currentBaseId = identifiedUser ? String(identifiedUser.collaboratorId || identifiedUser.id) : 'anon';
-  peerIdRef.current = `${currentBaseId}#${instanceIdRef.current}`;
-  peerNameRef.current = identifiedUser?.name || 'Operador em Turno';
-  peerRoleRef.current = identifiedUser?.role || 'Operativo';
+  const currentIdentity = resolveCurrentIdentity();
+  peerIdRef.current = `${currentIdentity.id}#${instanceIdRef.current}`;
+  peerNameRef.current = currentIdentity.name;
+  peerRoleRef.current = currentIdentity.role;
 
   const subscribedRef = useRef<string[]>([]);
   const connectionsRef = useRef<Map<string, ConnEntry>>(new Map());
@@ -250,6 +339,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   } | null>(null);
   const bcRef = useRef<BroadcastChannel | null>(null);
   const relayWarnedRef = useRef(false);
+  const sendSignalsRef = useRef<(msgs: SignalMessage[]) => void>(() => {});
 
   // Dismissed Direct Channels Map with close timestamps
   const DISMISSED_DIRECT_KEY = 'dimensio_radio_dismissed_direct_v2';
@@ -338,14 +428,36 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && enabled && !wakeLockRef.current) {
-        requestWakeLock();
+      if (document.visibilityState === 'visible' && enabled) {
+        if (!wakeLockRef.current) requestWakeLock();
+        resumeAllAudio();
+        if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+          audioCtxRef.current.resume().catch(() => {});
+        }
+        if (peerIdRef.current) {
+          updateRadioCloudPresence(
+            peerIdRef.current,
+            peerNameRef.current,
+            peerRoleRef.current,
+            subscribedRef.current
+          );
+        }
+        retryConnections(Date.now());
+      }
+    };
+
+    const handleOnline = () => {
+      if (enabled) {
+        resumeAllAudio();
+        retryConnections(Date.now());
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
       releaseWakeLock();
     };
   }, [enabled, requestWakeLock, releaseWakeLock]);
@@ -432,18 +544,51 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     Object.values<CommPeerInfo[]>(peersMap).forEach((list) => {
       list.forEach((p) => {
         const base = String(p.id).split('#')[0];
-        if (base && base !== 'anon') set.add(base);
+        if (base) set.add(base);
       });
     });
     return set;
   }, [peersMap]);
 
   useEffect(() => {
-    const baseId = identifiedUser ? String(identifiedUser.collaboratorId || identifiedUser.id) : 'anon';
-    peerIdRef.current = `${baseId}#${instanceIdRef.current}`;
-    peerNameRef.current = identifiedUser?.name || 'Operador em Turno';
-    peerRoleRef.current = identifiedUser?.role || 'Operativo';
-  }, [identifiedUser]);
+    const res = resolveCurrentIdentity();
+    const newPeerId = `${res.id}#${instanceIdRef.current}`;
+    peerIdRef.current = newPeerId;
+    peerNameRef.current = res.name;
+    peerRoleRef.current = res.role;
+
+    if (enabledRef.current) {
+      updateRadioCloudPresence(
+        newPeerId,
+        res.name,
+        res.role,
+        subscribedRef.current
+      );
+      if (bcRef.current) {
+        try {
+          bcRef.current.postMessage({
+            mid: generateId(),
+            kind: 'presence',
+            sender: newPeerId,
+            senderName: res.name,
+            senderRole: res.role,
+            channel: activeChannelRef.current || 'geral',
+            ts: Date.now(),
+          });
+        } catch {}
+      }
+      if (workerRef.current) {
+        try {
+          workerRef.current.postMessage({
+            type: 'peer',
+            peerId: newPeerId,
+            peerName: res.name,
+            peerRole: res.role,
+          });
+        } catch {}
+      }
+    }
+  }, [resolveCurrentIdentity]);
 
   useEffect(() => {
     const collabId = identifiedUser ? String(identifiedUser.collaboratorId || identifiedUser.id) : '';
@@ -578,6 +723,20 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         });
       }
     });
+
+    // Broadcast speaking status to peers for instantaneous UI indicators
+    try {
+      sendSignalsRef.current([{
+        mid: generateId(),
+        kind: 'speaking',
+        sender: peerIdRef.current,
+        senderName: peerNameRef.current,
+        senderRole: peerRoleRef.current,
+        channel: currentTargetCh,
+        payload: { speaking: on },
+        ts: Date.now(),
+      }]);
+    } catch {}
   }, [computeMicOn]);
 
   const acquireMic = useCallback(async () => {
@@ -639,6 +798,77 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [enabled, acquireMic]);
 
+  const refreshAudioOutputDevices = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioOutputs = devices.filter((d) => d.kind === 'audiooutput');
+      setAudioOutputDevices(audioOutputs);
+    } catch {}
+  }, []);
+
+  const setAudioOutputDevice = useCallback(async (deviceId: string) => {
+    audioOutputDeviceIdRef.current = deviceId;
+    setAudioOutputDeviceIdState(deviceId);
+    try {
+      localStorage.setItem('dimensio_audio_output_id', deviceId);
+    } catch {}
+
+    const promises: Promise<void>[] = [];
+    audioElsRef.current.forEach((el) => {
+      if ('setSinkId' in el && typeof (el as any).setSinkId === 'function') {
+        promises.push((el as any).setSinkId(deviceId).catch(() => {}));
+      }
+    });
+    if (liveAudioElRef.current && 'setSinkId' in liveAudioElRef.current && typeof (liveAudioElRef.current as any).setSinkId === 'function') {
+      promises.push((liveAudioElRef.current as any).setSinkId(deviceId).catch(() => {}));
+    }
+    await Promise.all(promises);
+    return true;
+  }, []);
+
+  const toggleLoudspeaker = useCallback(async () => {
+    const next = !isLoudspeakerRef.current;
+    isLoudspeakerRef.current = next;
+    setIsLoudspeaker(next);
+    try {
+      localStorage.setItem('dimensio_audio_loudspeaker', String(next));
+    } catch {}
+
+    if (next && audioOutputDevices.length > 0) {
+      const speakerDev = audioOutputDevices.find(
+        (d) =>
+          d.label.toLowerCase().includes('speaker') ||
+          d.label.toLowerCase().includes('alto-falante') ||
+          d.label.toLowerCase().includes('viva-voz') ||
+          d.label.toLowerCase().includes('loudspeaker')
+      );
+      if (speakerDev) {
+        await setAudioOutputDevice(speakerDev.deviceId);
+      } else {
+        await setAudioOutputDevice('default');
+      }
+    }
+    const targetVol = next ? 1.0 : 0.65;
+    setVolumeState(targetVol);
+    volumeRef.current = targetVol;
+    audioElsRef.current.forEach((el) => {
+      el.volume = targetVol;
+    });
+    return next;
+  }, [audioOutputDevices, setAudioOutputDevice]);
+
+  // Initial audio output devices query
+  useEffect(() => {
+    refreshAudioOutputDevices();
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', refreshAudioOutputDevices);
+      return () => {
+        navigator.mediaDevices.removeEventListener('devicechange', refreshAudioOutputDevices);
+      };
+    }
+  }, [refreshAudioOutputDevices]);
+
   const ensureAudioEl = useCallback((key: string): HTMLAudioElement => {
     let el = audioElsRef.current.get(key);
     if (!el) {
@@ -646,7 +876,9 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       el.autoplay = true;
       el.muted = false;
       el.volume = volumeRef.current;
+      (el as any).playsInline = true;
       el.setAttribute('playsinline', 'true');
+      el.setAttribute('webkit-playsinline', 'true');
       el.setAttribute('autoplay', 'true');
       el.style.position = 'fixed';
       el.style.width = '0';
@@ -654,6 +886,9 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       el.style.opacity = '0';
       el.style.overflow = 'hidden';
       el.style.pointerEvents = 'none';
+      if ('setSinkId' in el && typeof (el as any).setSinkId === 'function' && audioOutputDeviceIdRef.current && audioOutputDeviceIdRef.current !== 'default') {
+        (el as any).setSinkId(audioOutputDeviceIdRef.current).catch(() => {});
+      }
       document.body.appendChild(el);
       audioElsRef.current.set(key, el);
     }
@@ -662,6 +897,10 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const resumeAllAudio = useCallback(() => {
     setAudioBlocked(false);
+    if (enabledRef.current) {
+      mediaKeepalive.start(activeChannelRef.current || 'Geral').catch(() => {});
+      mediaKeepalive.ensurePlaying();
+    }
     if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
       audioCtxRef.current.resume().catch(() => {});
     }
@@ -700,6 +939,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const stopLiveBroadcast = useCallback(() => {
+    mediaKeepalive.stop();
     if (keepaliveIntervalRef.current) {
       clearInterval(keepaliveIntervalRef.current);
       keepaliveIntervalRef.current = null;
@@ -840,10 +1080,12 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     if (enabled) {
       startLiveBroadcast();
+      mediaKeepalive.start(activeChannel || 'Geral').catch(() => {});
     } else {
       stopLiveBroadcast();
+      mediaKeepalive.stop();
     }
-  }, [enabled, startLiveBroadcast, stopLiveBroadcast]);
+  }, [enabled, activeChannel, startLiveBroadcast, stopLiveBroadcast]);
 
   useEffect(() => () => { stopLiveBroadcast(); }, [stopLiveBroadcast]);
 
@@ -974,7 +1216,9 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         bcRef.current.postMessage(safeMessages);
       } catch {}
     }
-    sendFirestoreRadioSignals(safeMessages);
+    if (!isFirestoreQuotaExceeded()) {
+      sendFirestoreRadioSignals(safeMessages);
+    }
 
     if (workerRef.current) {
       try {
@@ -984,12 +1228,16 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       pendingOutboxRef.current.push(...safeMessages);
     }
   }, []);
+  sendSignalsRef.current = sendSignals;
 
   const awaitGathered = useCallback((pc: RTCPeerConnection) => {
     return new Promise<void>((resolve) => {
-      const t = setTimeout(resolve, 600);
+      const t = setTimeout(resolve, 2200);
       const check = () => {
-        if (pc.iceGatheringState === 'complete' || pc.localDescription?.sdp?.includes('candidate')) {
+        const sdp = pc.localDescription?.sdp || '';
+        const isComplete = (pc.iceGatheringState as string) === 'complete';
+        const hasSrflx = sdp.includes('typ srflx') || sdp.includes('typ relay') || isComplete;
+        if (hasSrflx || isComplete) {
           clearTimeout(t);
           resolve();
         } else {
@@ -1201,7 +1449,8 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       const existing = connectionsRef.current.get(key);
       if (existing && existing.pc.connectionState !== 'failed' && existing.pc.connectionState !== 'closed') return;
 
-      await acquireMic();
+      // Establish connection immediately (audio transceiver is ready); attach mic stream asynchronously
+      acquireMic().catch(() => {});
       const entry = createPc(peer.id, channelId, key, () => {});
       sendOffer(entry);
     },
@@ -1213,8 +1462,9 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const autoJoinDirectChannel = useCallback(
     (channelId: string, hints: { senderName?: string }) => {
-      if (!identifiedUser) return;
       if (!channelId.startsWith('direct:')) return;
+      const myBase = peerIdRef.current.split('#')[0];
+      if (!myBase || myBase === 'anon') return;
       const collabId = channelId.slice('direct:'.length);
       if (!collabId) return;
 
@@ -1232,7 +1482,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       setActiveChannel(channelId);
     },
-    [identifiedUser]
+    []
   );
 
   const handleSignal = useCallback(
@@ -1258,10 +1508,14 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           playRadioPttChirp('incoming');
           setRemoteTransmitting(true);
           remoteTransmittingRef.current = true;
+          const speakerName = msg.senderName && msg.senderName !== '—'
+            ? msg.senderName
+            : (msg.sender.startsWith('anon') ? 'Operador Convidado (Guest)' : 'Operador');
+          setActiveSpeakerName(speakerName);
           resumeAllAudio();
           // If the app is minimized (background on Android), notify the operator immediately
           if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-            const speaker = msg.senderName || 'Colega';
+            const speaker = speakerName;
             const chName = msg.channel.startsWith('direct:')
               ? 'Canal Direto'
               : msg.channel === 'geral'
@@ -1275,9 +1529,19 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           }
           setRemotePeersMap((prev) => {
             const list = prev[msg.channel!] || [];
+            const exists = list.some((p) => p.id === msg.sender);
+            const nextList = exists
+              ? list.map((p) => (p.id === msg.sender ? { ...p, speaking: true, name: p.name || speakerName } : p))
+              : [...list, {
+                  id: msg.sender,
+                  name: speakerName,
+                  role: msg.senderRole || 'Convidado',
+                  status: 'connected' as const,
+                  speaking: true,
+                }];
             return {
               ...prev,
-              [msg.channel!]: list.map((p) => (p.id === msg.sender ? { ...p, speaking: true } : p)),
+              [msg.channel!]: nextList,
             };
           });
         }
@@ -1288,6 +1552,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         if (msg.channel) {
           setRemoteTransmitting(false);
           remoteTransmittingRef.current = false;
+          setActiveSpeakerName(null);
           setRemotePeersMap((prev) => {
             const list = prev[msg.channel!] || [];
             return {
@@ -1299,14 +1564,61 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
 
+      // Speaking indicator broadcast
+      if (msg.kind === 'speaking' && msg.channel) {
+        if (msg.sender === peerIdRef.current) return;
+        const isSpeaking = Boolean((msg.payload as any)?.speaking);
+        const speakerName = msg.senderName && msg.senderName !== '—'
+          ? msg.senderName
+          : (msg.sender.startsWith('anon') ? 'Operador Convidado (Guest)' : 'Operador');
+        setRemotePeersMap((prev) => {
+          const list = prev[msg.channel!] || [];
+          const exists = list.some((p) => p.id === msg.sender);
+          const nextList = exists
+            ? list.map((p) => (p.id === msg.sender ? { ...p, speaking: isSpeaking, name: p.name || speakerName } : p))
+            : isSpeaking
+            ? [...list, {
+                id: msg.sender,
+                name: speakerName,
+                role: msg.senderRole || 'Convidado',
+                status: 'connected' as const,
+                speaking: true,
+              }]
+            : list;
+          return {
+            ...prev,
+            [msg.channel!]: nextList,
+          };
+        });
+        setRemoteTransmitting(isSpeaking);
+        setActiveSpeakerName(isSpeaking ? speakerName : null);
+        return;
+      }
+
       // Presence
       if (msg.kind === 'presence' && msg.channel) {
+        if (msg.sender === peerIdRef.current) return;
+
+        const incomingBase = msg.sender.split('#')[0];
+        if (incomingBase && !incomingBase.startsWith('anon')) {
+          connectionsRef.current.forEach((conn, connKey) => {
+            const [cChannel, cRemoteId] = connKey.split('|');
+            if (cChannel === msg.channel && cRemoteId !== msg.sender && cRemoteId.split('#')[0] === incomingBase) {
+              try { conn.pc.close(); } catch {}
+              connectionsRef.current.delete(connKey);
+            }
+          });
+        }
+
         setPeersMap((prev) => {
           const channelList = prev[msg.channel!] || [];
-          const existing = channelList.find((p) => p.id === msg.sender);
-          const list = channelList.filter((p) => p.id !== msg.sender);
-          const name = msg.senderName && msg.senderName !== '—' ? msg.senderName : (existing?.name && existing.name !== '—' ? existing.name : 'Operador');
-          const role = msg.senderRole || existing?.role || '';
+          const list = channelList.filter(
+            (p) => p.id !== msg.sender && (!incomingBase || incomingBase.startsWith('anon') || p.id.split('#')[0] !== incomingBase)
+          );
+          const name = msg.senderName && msg.senderName !== '—' && msg.senderName !== 'Operador'
+            ? msg.senderName
+            : (incomingBase.startsWith('anon') ? 'Operador Visitante' : 'Operador');
+          const role = msg.senderRole || (incomingBase.startsWith('anon') ? 'Convidado' : 'Operativo');
           list.push({
             id: msg.sender,
             name,
@@ -1380,13 +1692,15 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
 
           if (!conn) {
             conn = createPc(msg.sender, channelId, key, () => {});
-            const stream = await acquireMic();
-            if (stream && conn.pc.getSenders().length === 0) {
-              const track = stream.getAudioTracks()[0];
-              if (track) {
-                try { conn.pc.addTrack(track, stream); } catch {}
+            // Asynchronously attach mic track without blocking answer generation
+            acquireMic().then((stream) => {
+              if (stream && conn && conn.pc.connectionState !== 'closed' && conn.pc.getSenders().length === 0) {
+                const track = stream.getAudioTracks()[0];
+                if (track) {
+                  try { conn.pc.addTrack(track, stream); } catch {}
+                }
               }
-            }
+            }).catch(() => {});
           }
 
           try {
@@ -1530,23 +1844,45 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     const unsubscribePresence = subscribeToRadioCloudPresence((list) => {
       const now = Date.now();
       const currentPeerId = peerIdRef.current;
+      const myBaseId = currentPeerId ? currentPeerId.split('#')[0] : '';
       const validPeers = list.filter(
-        (p) => p && p.peerId && p.peerId !== currentPeerId && now - (p.lastSeen || 0) < 15000
+        (p) => p && p.peerId && p.peerId !== currentPeerId && (p.peerId.split('#')[0] !== myBaseId) && now - (p.lastSeen || 0) < 18000
       );
 
       setPeersMap((prev) => {
         const next: Record<string, CommPeerInfo[]> = {};
+        // Preserve existing local peers that are still active
+        Object.entries(prev).forEach(([ch, list]) => {
+          next[ch] = list.filter((p) => p.lastSeen && (now - p.lastSeen < 18000 && p.id.split('#')[0] !== myBaseId));
+        });
+
         validPeers.forEach((p) => {
+          const baseId = p.peerId.split('#')[0];
+          if (baseId) {
+            connectionsRef.current.forEach((conn, key) => {
+              const [cCh, cRemoteId] = key.split('|');
+              if (cRemoteId !== p.peerId && cRemoteId.split('#')[0] === baseId) {
+                try { conn.pc.close(); } catch {}
+                connectionsRef.current.delete(key);
+              }
+            });
+          }
+
           (p.channels || []).forEach((ch) => {
             if (!next[ch]) next[ch] = [];
-            const existing = next[ch].find((x) => x.id === p.peerId);
-            if (!existing) {
-              next[ch].push({
-                id: p.peerId,
-                name: p.peerName || 'Operador',
-                role: p.peerRole || 'Operativo',
-                lastSeen: p.lastSeen,
-              });
+            // Remove previous instances of this same operator/guest in the channel
+            next[ch] = next[ch].filter((x) => x.id === p.peerId || x.id.split('#')[0] !== baseId);
+            const peerObj: CommPeerInfo = {
+              id: p.peerId,
+              name: p.peerName || (baseId.startsWith('anon') ? 'Operador Convidado' : 'Operador'),
+              role: p.peerRole || (baseId.startsWith('anon') ? 'Convidado' : 'Operativo'),
+              lastSeen: p.lastSeen,
+            };
+            const existingIdx = next[ch].findIndex((x) => x.id === p.peerId);
+            if (existingIdx >= 0) {
+              next[ch][existingIdx] = peerObj;
+            } else {
+              next[ch].push(peerObj);
             }
           });
         });
@@ -1584,15 +1920,46 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
     sendPresence();
-    const presenceTimer = setInterval(sendPresence, 4000);
+    // Heartbeat every 25 seconds (prevents Firestore quota exhaustion)
+    const presenceTimer = setInterval(sendPresence, 8000);
+
+    const sendByeAndCleanup = () => {
+      const myId = peerIdRef.current;
+      if (!myId) return;
+      try {
+        removeRadioCloudPresence(myId);
+      } catch {}
+      const byeMsgs: SignalMessage[] = subscribedRef.current.map((ch) => ({
+        mid: generateId(),
+        kind: 'bye',
+        sender: myId,
+        channel: ch,
+        ts: Date.now(),
+      }));
+      try {
+        sendSignals(byeMsgs);
+      } catch {}
+      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        try {
+          const blob = new Blob(
+            [JSON.stringify({ mode: 'signal', signal: byeMsgs, spreadsheetUrl: state.onlineSpreadsheet?.url || '' })],
+            { type: 'application/json' }
+          );
+          navigator.sendBeacon('/api/signal', blob);
+        } catch {}
+      }
+    };
+
+    window.addEventListener('beforeunload', sendByeAndCleanup);
+    window.addEventListener('pagehide', sendByeAndCleanup);
 
     return () => {
       unsubscribeSignals();
       unsubscribePresence();
       clearInterval(presenceTimer);
-      if (myPeerId) {
-        removeRadioCloudPresence(myPeerId);
-      }
+      window.removeEventListener('beforeunload', sendByeAndCleanup);
+      window.removeEventListener('pagehide', sendByeAndCleanup);
+      sendByeAndCleanup();
     };
   }, [enabled]);
 
@@ -1603,9 +1970,10 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
 
   // Background Web Worker for non-throttled signaling and presence
   useEffect(() => {
-    if (!enabled || !webhookUrl) return;
+    if (!enabled) return;
     const worker = new Worker(new URL('../workers/signalWorker.ts', import.meta.url), { type: 'module' });
     workerRef.current = worker;
+    mediaKeepalive.attachWorkerPort(worker);
 
     worker.onmessage = (e) => {
       const data = e.data as { type: string; [k: string]: unknown };
@@ -1626,20 +1994,16 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           liveAudioElRef.current.play().catch(() => {});
         }
       } else if (data.type === 'keepalive-ping') {
-        // Worker não é estrangulado em 2º plano: usa o tick para manter
-        // o Modo de Mídia (MediaSession + AudioContext) vivo.
-        void import('../utils/mediaKeepalive').then((m) => {
-          try {
-            m.mediaKeepalive.pokeFromWorker();
-          } catch {}
-        }).catch(() => {});
+        try {
+          mediaKeepalive.pokeFromWorker();
+        } catch {}
       }
     };
 
     worker.postMessage({
       type: 'start',
       config: {
-        webhookUrl,
+        webhookUrl: webhookUrl || "/api/signal",
         spreadsheetUrl: state.onlineSpreadsheet?.url || '',
         peerId: peerIdRef.current,
         peerName: peerNameRef.current,
@@ -1666,6 +2030,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     syncIdentity();
 
     return () => {
+      mediaKeepalive.attachWorkerPort(null);
       worker.postMessage({ type: 'stop' });
       worker.terminate();
       workerRef.current = null;
@@ -1689,7 +2054,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       let changed = false;
       const next: Record<string, CommPeerInfo[]> = {};
       Object.keys(prev).forEach((ch) => {
-        const alive = prev[ch].filter((p) => now - p.lastSeen < PEER_TTL_MS);
+        const alive = prev[ch].filter((p) => p.lastSeen && now - p.lastSeen < PEER_TTL_MS);
         if (alive.length !== prev[ch].length) changed = true;
         if (alive.length > 0) next[ch] = alive;
       });
@@ -1972,6 +2337,30 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const leaveAll = useCallback(() => {
+    if (peerIdRef.current) {
+      try {
+        removeRadioCloudPresence(peerIdRef.current);
+      } catch {}
+      const byeMsgs: SignalMessage[] = subscribedRef.current.map((ch) => ({
+        mid: generateId(),
+        kind: 'bye',
+        sender: peerIdRef.current,
+        channel: ch,
+        ts: Date.now(),
+      }));
+      try {
+        sendSignals(byeMsgs);
+      } catch {}
+      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        try {
+          const blob = new Blob(
+            [JSON.stringify({ mode: 'signal', signal: byeMsgs, spreadsheetUrl: state.onlineSpreadsheet?.url || '' })],
+            { type: 'application/json' }
+          );
+          navigator.sendBeacon('/api/signal', blob);
+        } catch {}
+      }
+    }
     setSubscribedChannels([]);
     subscribedRef.current = [];
     connectionsRef.current.forEach((c) => {
@@ -1979,6 +2368,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     });
     connectionsRef.current.clear();
     clearAudioEls();
+    mediaKeepalive.stop();
     if (micTrackRef.current) {
       try { micTrackRef.current.stop(); } catch {}
       micTrackRef.current = null;
@@ -1990,7 +2380,9 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       micStreamRef.current = null;
     }
     setMicAvailable(false);
-  }, [clearAudioEls]);
+    setPeersMap({});
+    setRemotePeersMap({});
+  }, [clearAudioEls, sendSignals, state.onlineSpreadsheet?.url]);
 
   const setEnabled = useCallback((val: boolean) => {
     setEnabledState(val);
@@ -2137,7 +2529,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     setSfxEnabled,
     wakeLockActive,
     relayOnline,
-    identified: Boolean(identifiedUser),
+    identified: Boolean(identifiedUser || (peerIdRef.current && !peerIdRef.current.startsWith('anon#'))),
     channels,
     subscribedChannels,
     activeChannel,
@@ -2149,6 +2541,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     setMode,
     speaking,
     remoteTransmitting,
+    activeSpeakerName,
     startSpeaking,
     stopSpeaking,
     transmissionLocked,
@@ -2171,6 +2564,12 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     openDirectChannel,
     closeDirectChannel,
     leaveAll,
+    audioOutputDevices,
+    audioOutputDeviceId,
+    isLoudspeaker,
+    setAudioOutputDevice,
+    toggleLoudspeaker,
+    refreshAudioOutputDevices,
   };
 
   return <CommContext.Provider value={value}>{children}</CommContext.Provider>;

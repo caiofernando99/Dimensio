@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
-import { AppState, AppWidgetsConfig, AuditLogEntry, AutoAssignOptions, AutoBackupInfo, AutoBackupSettings, BackupSnapshot, BreakGenerationMode, BreakRotationInfo, BreakSlot, BriefingConfig, Collaborator, CompanyManager, CompanyManagerRole, DeletedCollaborator, ExtensionConfig, FeedbackConfig, IdentifiedUser, InfoHubLink, InfoHubQuickFill, InfoHubReminder, MetricDefinition, MetricReading, NotificationPreferences, OnlineSpreadsheetConfig, PresenceSyncEvent, PresenceSyncRecord, ProcessKnowledge, RoleAccessLevel, RoutineRecurrence, ScaleType, ScheduledAbsence, ScheduledTask, ScheduledTaskList, SectorDefinition, ServiceRequest, ShiftCustomConfig, ShiftGroup, SystemNotification, Task, TaskAreaCount, TeamDefinition, ThemeOption, UserPersonalPreferences, UserProfileData, UserWorkStatus } from '../types';
-import { pushStateToFirestore, subscribeToFirestoreState, fetchStateFromFirestoreOnce, saveUserProfileToFirestore, getUserProfileFromFirestore, subscribeToUserProfile, saveUserScratchpad as saveUserScratchpadToFirestore, updateUserWorkStatus as updateUserWorkStatusInFirestore } from '../lib/firestoreStorage';
+import { AppState, AppWidgetsConfig, AuditLogEntry, AutoAssignOptions, AutoBackupInfo, AutoBackupSettings, BackupSnapshot, BreakGenerationMode, BreakRotationInfo, BreakSlot, BriefingConfig, Collaborator, CompanyManager, CompanyManagerRole, DeletedCollaborator, ExtensionConfig, FeedbackConfig, FirestoreBackupRecord, IdentifiedUser, InfoHubLink, InfoHubQuickFill, InfoHubReminder, MetricDefinition, MetricReading, NotificationPreferences, OnlineSpreadsheetConfig, PresenceSyncEvent, PresenceSyncRecord, ProcessKnowledge, RoleAccessLevel, RoutineRecurrence, ScaleType, ScheduledAbsence, ScheduledTask, ScheduledTaskList, SectorDefinition, ServiceRequest, ShiftCustomConfig, ShiftGroup, SystemNotification, Task, TaskAreaCount, TeamDefinition, ThemeOption, UserPersonalPreferences, UserProfileData, UserWorkStatus } from '../types';
+import { pushStateToFirestore, subscribeToFirestoreState, fetchStateFromFirestoreOnce, saveUserProfileToFirestore, getUserProfileFromFirestore, subscribeToUserProfile, deleteUserProfileFromFirestore, saveUserScratchpad as saveUserScratchpadToFirestore, updateUserWorkStatus as updateUserWorkStatusInFirestore, saveBackupToFirestore, listFirestoreBackups, restoreFirestoreBackup, deleteFirestoreBackup, isFirestoreQuotaExceeded } from '../lib/firestoreStorage';
 import {
   auth,
   googleProvider,
@@ -227,6 +227,17 @@ interface AppContextType {
   restoreFromAuditLog: (logId: string) => boolean;
   clearAuditLogs: () => void;
 
+  // Backups no Firestore (Nuvem / Agendamento Periódico & Diário)
+  firestoreBackups: FirestoreBackupRecord[];
+  isLoadingFirestoreBackups: boolean;
+  refreshFirestoreBackups: () => Promise<FirestoreBackupRecord[]>;
+  createFirestoreBackup: (
+    reason?: string,
+    cadence?: 'daily' | 'interval' | 'manual' | 'safety' | 'recovery'
+  ) => Promise<{ success: boolean; backup?: FirestoreBackupRecord; error?: string }>;
+  restoreFromFirestoreBackup: (backupId: string) => Promise<boolean>;
+  deleteFirestoreBackupById: (backupId: string) => Promise<boolean>;
+
   // Notifications
   addNotification: (notification: Omit<SystemNotification, 'id' | 'createdAt' | 'read'>) => void;
   broadcastNotice: (opts: {
@@ -332,6 +343,7 @@ interface AppContextType {
   signUpWithEmailAuth: (email: string, pass: string, displayName?: string, companyName?: string) => Promise<{ success: boolean; message: string }>;
   sendPasswordResetEmailAuth: (email: string) => Promise<{ success: boolean; message: string }>;
   signOutAuth: () => Promise<void>;
+  deleteCurrentUserAccount: () => Promise<{ success: boolean; message: string }>;
   registerCompanyWorkspace: (companyName: string, sector?: string, location?: string) => Promise<void>;
   isFirestoreActive: boolean;
   linkCollaboratorWithAuth: (collaboratorId: string) => Promise<{ success: boolean; message: string }>;
@@ -350,6 +362,40 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+/**
+ * Gera assinatura dos dados operacionais e de negócio reais.
+ * Exclui contadores de sincronização, metadados transitórios de rede e flags de interface (UI)
+ * para evitar loops infinitos de regravação e poupar a cota do Firebase.
+ */
+function getBusinessDataSignature(s: AppState | null | undefined): string {
+  if (!s) return '';
+  try {
+    return JSON.stringify({
+      cols: (s.collaborators || []).map((c) => [c.id, c.name, c.role, c.shift, c.scale, c.category, c.sector]),
+      delCols: s.deletedCollaborators || [],
+      tsks: (s.tasks || []).map((t) => [t.id, t.name, t.members, t.active]),
+      brks: s.breaks || [],
+      att: s.attendance || {},
+      int: s.intervals || {},
+      rep: s.dailyReports || {},
+      sec: s.sector || '',
+      team: s.teamName || '',
+      mgr: s.manager || '',
+      shf: s.shifts || [],
+      scl: s.scaleGroups || [],
+      hsk: s.helpdeskConfig || {},
+      msg: (s.supportMessages || []).map((m) => [m.id, m.status, m.assignedToId]),
+      cal: s.calendar || {},
+      calevt: s.calendarEvents || {},
+      notes: s.tempNotes || '',
+      reqs: (s.serviceRequests || []).map((r) => [r.id, r.status, r.targetId || '']),
+      stasks: (s.scheduledTasks || []).map((st) => [st.id, st.dueDate || '', st.status]),
+    });
+  } catch {
+    return String(s.updatedAtMs || '');
+  }
+}
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const tabId = useRef<string>(Math.random().toString(36).substring(2, 9));
   const isRemoteOrBroadcastUpdate = useRef<boolean>(false);
@@ -365,6 +411,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   })());
   const isConnectingRef = useRef<boolean>(false);
   const isFetchingRef = useRef<boolean>(false);
+  const lastSyncedBusinessDataSignatureRef = useRef<string>('');
   const liveBcRef = useRef<BroadcastChannel | null>(null);
   const lastCloudBackupAttemptAt = useRef<number>(0);
   const lastRemoteCollaboratorCount = useRef<number>(0);
@@ -1054,6 +1101,121 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     URL.revokeObjectURL(url);
     showNotice(`Backup baixado com sucesso: ${fileName}`);
   };
+
+  // Backups no Firestore (Nuvem / Agendamento Periódico & Diário)
+  const [firestoreBackups, setFirestoreBackups] = useState<FirestoreBackupRecord[]>([]);
+  const [isLoadingFirestoreBackups, setIsLoadingFirestoreBackups] = useState<boolean>(false);
+
+  const refreshFirestoreBackups = useCallback(async (): Promise<FirestoreBackupRecord[]> => {
+    setIsLoadingFirestoreBackups(true);
+    try {
+      const workspaceId = (stateRef.current?.onlineSpreadsheet?.firestoreCollection || 'main_workspace')
+        .replace(/[^a-zA-Z0-9_-]/g, '_');
+      const list = await listFirestoreBackups(workspaceId, 60);
+      setFirestoreBackups(list);
+      return list;
+    } catch (err) {
+      console.warn('Erro ao atualizar backups do Firestore:', err);
+      return [];
+    } finally {
+      setIsLoadingFirestoreBackups(false);
+    }
+  }, []);
+
+  const createFirestoreBackup = useCallback(async (
+    reason: string = 'Backup Automático no Firestore',
+    cadence: 'daily' | 'interval' | 'manual' | 'safety' | 'recovery' = 'daily'
+  ): Promise<{ success: boolean; backup?: FirestoreBackupRecord; error?: string }> => {
+    try {
+      const currentState = stateRef.current || state;
+      const maxRetain = currentState.autoBackupSettings?.maxRetainFirestoreBackups || 30;
+      const author = identifiedUser?.name || 'Sistema Dimensio';
+
+      const res = await saveBackupToFirestore(currentState, reason, cadence, author, maxRetain);
+      if (res.success && res.backup) {
+        const nowIso = new Date().toISOString();
+        const todayIso = getTodayISO();
+
+        updateLocalState((prev) => ({
+          ...prev,
+          autoBackupSettings: {
+            ...(prev.autoBackupSettings || { enabled: true, intervalMinutes: 30, maxRetainSnapshots: 20 }),
+            lastFirestoreBackupAt: nowIso,
+            lastFirestoreBackupDate: todayIso,
+            lastFirestoreBackupId: res.backup?.id,
+            lastFirestoreBackupStatus: 'success',
+            lastFirestoreBackupError: undefined,
+          },
+        }));
+
+        setFirestoreBackups((prev) => [res.backup!, ...prev.filter((b) => b.id !== res.backup!.id)]);
+        addAuditLog('backup', `Backup em nuvem gravado no Firestore: "${reason}" (${cadence})`);
+        return res;
+      } else {
+        updateLocalState((prev) => ({
+          ...prev,
+          autoBackupSettings: {
+            ...(prev.autoBackupSettings || { enabled: true, intervalMinutes: 30, maxRetainSnapshots: 20 }),
+            lastFirestoreBackupStatus: 'error',
+            lastFirestoreBackupError: res.error || 'Falha ao salvar backup no Firestore',
+          },
+        }));
+        return res;
+      }
+    } catch (error: any) {
+      console.error('Erro ao acionar backup no Firestore:', error);
+      return { success: false, error: error?.message || 'Erro inesperado ao salvar backup no Firestore' };
+    }
+  }, [identifiedUser]);
+
+  const restoreFromFirestoreBackup = useCallback(async (backupId: string): Promise<boolean> => {
+    try {
+      createAutoBackup('Backup de Segurança Antes de Restaurar do Firestore');
+      const res = await restoreFirestoreBackup(backupId);
+      if (res.success && res.state) {
+        const currentState = stateRef.current || state;
+        const normalized = normalizeAppState(res.state, currentState);
+        setState({
+          ...normalized,
+          updatedAtMs: Date.now(),
+        });
+        addAuditLog('backup', `Restauração completa executada a partir do backup em nuvem do Firestore (${backupId})`);
+        showNotice('Dados da equipe restaurados com sucesso a partir do backup no Firestore!', undefined, undefined, 'sync');
+        return true;
+      } else {
+        showNotice(res.error || 'Falha ao restaurar dados do Firestore.');
+        return false;
+      }
+    } catch (err: any) {
+      console.error('Erro na restauração do Firestore:', err);
+      showNotice('Erro ao tentar restaurar backup do Firestore.');
+      return false;
+    }
+  }, []);
+
+  const deleteFirestoreBackupById = useCallback(async (backupId: string): Promise<boolean> => {
+    try {
+      const ok = await deleteFirestoreBackup(backupId);
+      if (ok) {
+        setFirestoreBackups((prev) => prev.filter((b) => b.id !== backupId));
+        addAuditLog('backup', `Backup do Firestore removido (${backupId})`);
+        showNotice('Backup removido do Firestore com sucesso.');
+        return true;
+      } else {
+        showNotice('Não foi possível excluir o backup do Firestore.');
+        return false;
+      }
+    } catch (err) {
+      console.error('Erro ao excluir backup do Firestore:', err);
+      showNotice('Erro ao excluir backup do Firestore.');
+      return false;
+    }
+  }, []);
+
+  // Fetch Firestore backups initially when online
+  useEffect(() => {
+    refreshFirestoreBackups().catch(() => {});
+  }, [refreshFirestoreBackups]);
 
   const generateShareableConnectionLink = (): string => {
     const currentConfig = state.onlineSpreadsheet;
@@ -4358,6 +4520,65 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     }
   };
 
+  const deleteCurrentUserAccount = async (): Promise<{ success: boolean; message: string }> => {
+    try {
+      setIsAuthLoading(true);
+      const currentUser = auth.currentUser;
+      const uid = currentUser?.uid || identifiedUser?.firebaseUid;
+      if (!uid) {
+        return { success: false, message: 'Nenhum usuário autenticado identificado para exclusão.' };
+      }
+
+      // 1. Remove documento de perfil do Firestore
+      await deleteUserProfileFromFirestore(uid);
+
+      // 2. Remove registro de gestor se existir
+      if (identifiedUser?.managerId || identifiedUser?.email) {
+        updateLocalState((prev) => ({
+          ...prev,
+          companyManagers: (prev.companyManagers || []).filter(
+            (m) => m.firebaseUid !== uid && m.email !== identifiedUser?.email
+          ),
+        }));
+      }
+
+      // 3. Exclui do Firebase Auth via endpoint de backend
+      try {
+        await fetch('/api/auth/delete-account', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: uid }),
+        });
+      } catch (err) {
+        console.warn('Backend delete-account warning:', err);
+      }
+
+      // 4. Exclui credencial do cliente Firebase se usuário estiver ativo
+      try {
+        if (currentUser) {
+          await currentUser.delete();
+        }
+      } catch (clientErr) {
+        console.warn('Client-side deleteUser warning:', clientErr);
+        await signOut(auth);
+      }
+
+      // 5. Limpa credenciais locais e encerra sessão
+      setFirebaseUser(null);
+      setIdentifiedUser(null);
+      setUserProfile(null);
+      logoutUser();
+      showNotice('Sua conta e dados de acesso foram excluídos com sucesso.', undefined, undefined, 'info');
+
+      return { success: true, message: 'Conta excluída com sucesso.' };
+    } catch (err: any) {
+      console.error('Delete account error:', err);
+      return { success: false, message: err?.message || 'Falha ao excluir conta.' };
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
   const isFirestoreActive = Boolean(
     state.onlineSpreadsheet?.databaseProvider === 'firestore' ||
     (state.onlineSpreadsheet?.firestoreCollection && !state.onlineSpreadsheet?.webhookUrl)
@@ -4756,21 +4977,75 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     showNotice('Configurações de backup automático salvas.');
   };
 
-  // Auto Backup Interval Checking Effect
+  // Auto Backup Interval and Scheduled Daily Cloud Backup Effect
   useEffect(() => {
     const backupConfig = state.autoBackupSettings;
     if (!backupConfig || !backupConfig.enabled) return;
 
-    const intervalMs = (backupConfig.intervalMinutes || 30) * 60 * 1000;
-    const interval = setInterval(() => {
-      const lastTime = lastAutoBackupInfo?.timestamp ? new Date(lastAutoBackupInfo.timestamp).getTime() : 0;
-      if (Date.now() - lastTime >= intervalMs) {
-        createAutoBackup('Backup Automático Programado');
+    const runChecks = async () => {
+      const now = new Date();
+      const todayISO = getTodayISO();
+      const currentHHmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const saveToFirestore = backupConfig.saveToFirestore ?? true;
+      const cadence = backupConfig.scheduleCadence || 'daily';
+      const targetDailyTime = backupConfig.dailyBackupTime || '06:00';
+
+      // 1. Local Browser Snapshot Backup
+      const localIntervalMs = (backupConfig.intervalMinutes || 30) * 60 * 1000;
+      const lastLocalTime = lastAutoBackupInfo?.timestamp ? new Date(lastAutoBackupInfo.timestamp).getTime() : 0;
+      if (Date.now() - lastLocalTime >= localIntervalMs) {
+        createAutoBackup('Backup Automático Programado Local');
       }
-    }, Math.min(intervalMs, 60000));
+
+      // 2. Scheduled Daily Cloud Backup to Firestore
+      if (saveToFirestore) {
+        const isDailyDue =
+          (cadence === 'daily' || cadence === 'interval' || cadence === 'hourly') &&
+          backupConfig.lastFirestoreBackupDate !== todayISO &&
+          currentHHmm >= targetDailyTime;
+
+        if (isDailyDue) {
+          try {
+            await createFirestoreBackup(
+              `Backup Diário Automático Agendado (${todayISO} ${targetDailyTime})`,
+              'daily'
+            );
+          } catch (err) {
+            console.warn('[AutoBackup] Falha no agendamento diário do Firestore:', err);
+          }
+          return;
+        }
+
+        // 3. Periodic Interval Cloud Backup to Firestore
+        if (cadence === 'interval' || cadence === 'hourly') {
+          const intervalMins = cadence === 'hourly' ? 60 : (backupConfig.intervalMinutes || 30);
+          const intervalMs = intervalMins * 60 * 1000;
+          const lastFirestoreMs = backupConfig.lastFirestoreBackupAt
+            ? new Date(backupConfig.lastFirestoreBackupAt).getTime()
+            : 0;
+
+          if (Date.now() - lastFirestoreMs >= intervalMs) {
+            try {
+              await createFirestoreBackup(
+                `Backup Periódico Automático (${intervalMins}m)`,
+                'interval'
+              );
+            } catch (err) {
+              console.warn('[AutoBackup] Falha no backup periódico do Firestore:', err);
+            }
+          }
+        }
+      }
+    };
+
+    // Run on startup/settings change, then every 30 seconds
+    runChecks().catch(() => {});
+    const interval = setInterval(() => {
+      runChecks().catch(() => {});
+    }, 30000);
 
     return () => clearInterval(interval);
-  }, [state.autoBackupSettings, lastAutoBackupInfo]);
+  }, [state.autoBackupSettings, lastAutoBackupInfo, createFirestoreBackup]);
 
   // NOTIFICATIONS
   const addNotification = (notifData: Omit<SystemNotification, 'id' | 'createdAt' | 'read'>) => {
@@ -6013,6 +6288,41 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     const normalizedRemote = normalizeAppState(remoteCandidate, currentState);
     lastRemoteCollaboratorCount.current = normalizedRemote.collaborators.length;
 
+    // --- MECANISMO DE DIFFING INTELIGENTE ---
+    // Apenas aplica campos que efetivamente mudaram no estado remoto em relação ao local,
+    // evitando re-renderizações em cascata e chamadas de API desnecessárias.
+    const areValuesDifferent = (a: any, b: any) => {
+      if (a === b) return false;
+      if (typeof a !== typeof b) return true;
+      try {
+        return JSON.stringify(a) !== JSON.stringify(b);
+      } catch {
+        return true;
+      }
+    };
+
+    const changedFields: Partial<AppState> = {};
+    let hasActualDiff = false;
+
+    const fieldsToCheck: (keyof AppState)[] = [
+      'collaborators', 'deletedCollaborators', 'tasks', 'breaks', 'attendance',
+      'intervals', 'roles', 'categories', 'skills', 'teamLeaders', 'dailyReports',
+      'tempNotes', 'teamName', 'sector', 'manager', 'teamShift', 'shifts',
+      'scaleType', 'scaleGroups', 'defaultTeamLeader', 'infoHubQuickFills',
+      'infoHubLinks', 'infoHubReminders', 'serviceRequests', 'processKnowledgeList',
+      'helpdeskConfig', 'shareCustomConfig', 'shareFilters', 'reportExportConfig',
+      'portalConfig', 'portalNotificationConfig', 'widgetsConfig', 'calendar',
+      'calendarEvents', 'catalogs', 'scheduledTasks', 'scheduledTaskLists',
+      'userPasswords', 'rolePermissions', 'theme'
+    ];
+
+    fieldsToCheck.forEach((key) => {
+      if (areValuesDifferent(currentState[key], normalizedRemote[key])) {
+        (changedFields as any)[key] = normalizedRemote[key];
+        hasActualDiff = true;
+      }
+    });
+
     const now = new Date();
     const timestampStr = `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR')}`;
 
@@ -6021,16 +6331,15 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     const mergedDeletedIds = Array.from(new Set([...localDeletedIds, ...remoteDeletedIds])).slice(-200);
 
     const remoteNotifs: SystemNotification[] = Array.isArray(normalizedRemote.notifications) ? normalizedRemote.notifications : [];
-    // Ids seen BEFORE the merge, so newly arrived remote notifications actually
-    // trigger the alert (sound / toast / native). Computing them after the merge
-    // would mark every remote notification as "already seen" and silence alerts.
     const preMergeLocalNotifIds = new Set<string>((notificationsRef.current || []).map((n: SystemNotification) => n.id));
     const mergedNotifs = mergeNotifications(remoteNotifs, notificationsRef.current, mergedDeletedIds);
     notificationsRef.current = mergedNotifs;
 
-    // auditLogs arrive truncated (cloud keeps only the last 30, without snapshot).
-    // Merge them with local (dedupe by id, newest wins) so the audit trail is never
-    // shortened or lost when pulling from the cloud.
+    // Se nenhuma chave de negócio mudou e não há novas notificações, encerra sem disparar setState
+    if (!hasActualDiff && mergedNotifs.length === (notificationsRef.current || []).length && !opts?.allowOlder && localHasData) {
+      return true;
+    }
+
     const remoteAudits: AuditLogEntry[] = Array.isArray(normalizedRemote.auditLogs) ? normalizedRemote.auditLogs : [];
     const localAudits: AuditLogEntry[] = Array.isArray(currentState.auditLogs) ? currentState.auditLogs : [];
     const auditById = new Map<string, AuditLogEntry>();
@@ -6047,12 +6356,12 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
 
     setState((prev) => {
       const nextState: AppState = {
-        ...normalizedRemote,
+        ...prev,
+        ...changedFields,
         isSidebarCollapsed: prev.isSidebarCollapsed ?? normalizedRemote.isSidebarCollapsed ?? true,
         deletedNotificationIds: mergedDeletedIds,
         notifications: mergedNotifs,
         auditLogs: mergedAuditLogs,
-        // Keep the full local backup snapshots (cloud only carries stripped copies).
         autoBackups: prev.autoBackups ?? normalizedRemote.autoBackups ?? [],
         isSampleData: false,
         updatedAtMs: remoteUpdatedAtMs,
@@ -6066,6 +6375,7 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
           : null,
       };
       stateRef.current = nextState;
+      lastSyncedBusinessDataSignatureRef.current = getBusinessDataSignature(nextState);
       return nextState;
     });
 
@@ -6085,8 +6395,14 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       try {
         const collectionName = currentConfig.firestoreCollection?.trim() || 'dimensio_workspaces';
         const docId = 'main_roster_state';
-        const { state: remoteData, updatedAtMs: remoteUpdatedAtMs } = await fetchStateFromFirestoreOnce(collectionName, docId);
+        const { state: remoteData, updatedAtMs: remoteUpdatedAtMs, quotaExceeded } = await fetchStateFromFirestoreOnce(collectionName, docId);
         
+        if (quotaExceeded) {
+          consecutiveFailuresRef.current = 0;
+          setCloudOnline(false);
+          return false;
+        }
+
         consecutiveFailuresRef.current = 0;
         lastFetchReachedServer.current = true;
         setCloudOnline(true);
@@ -6341,6 +6657,8 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
           consecutiveFailuresRef.current = 0;
           setCloudOnline(true);
           lastSyncedTimestampMs.current = timestampMs;
+          lastSyncedBusinessDataSignatureRef.current = getBusinessDataSignature(currentState);
+          isRemoteOrBroadcastUpdate.current = true;
 
           setState((prev) => ({
             ...prev,
@@ -6802,6 +7120,8 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       try { localStorage.setItem(LAST_SYNCED_TIMESTAMP_KEY, String(timestampMs)); } catch {}
       consecutiveFailuresRef.current = 0;
       lastRemoteCollaboratorCount.current = state.collaborators.length;
+      lastSyncedBusinessDataSignatureRef.current = getBusinessDataSignature(currentState);
+      isRemoteOrBroadcastUpdate.current = true;
       setCloudOnline(true);
       setState((prev) => ({
         ...prev,
@@ -7023,10 +7343,21 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       (state.onlineSpreadsheet.databaseProvider === 'firestore' || state.onlineSpreadsheet.webhookUrl) &&
       state.onlineSpreadsheet.autoSyncEnabled !== false
     ) {
+      // Se a cota do Firestore foi atingida, interrompe o auto-sync para não travar a aplicação nem saturar o navegador
+      if (state.onlineSpreadsheet.databaseProvider === 'firestore' && isFirestoreQuotaExceeded()) {
+        return;
+      }
+
+      // Verificação de diff de negócio: se nenhum dado operacional mudou, evita chamada de rede desnecessária
+      const currentSignature = getBusinessDataSignature(state);
+      if (currentSignature && currentSignature === lastSyncedBusinessDataSignatureRef.current) {
+        return;
+      }
+
       if (autoSyncTimeoutRef.current) clearTimeout(autoSyncTimeoutRef.current);
       autoSyncTimeoutRef.current = setTimeout(() => {
         syncToOnlineSpreadsheet(true);
-      }, 300);
+      }, 1200);
       return () => {
         if (autoSyncTimeoutRef.current) clearTimeout(autoSyncTimeoutRef.current);
       };
@@ -7040,7 +7371,7 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
   // Firestore Real-Time Listener (Instant 0-latency live push notifications and roster changes)
   useEffect(() => {
     const currentConfig = state.onlineSpreadsheet;
-    if (!currentConfig || currentConfig.databaseProvider !== 'firestore' || currentConfig.autoSyncEnabled === false) {
+    if (!currentConfig || currentConfig.databaseProvider !== 'firestore' || currentConfig.autoSyncEnabled === false || isFirestoreQuotaExceeded()) {
       return;
     }
 
@@ -7115,7 +7446,7 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
             if (timer) clearInterval(timer);
             timer = setInterval(function() {
               self.postMessage('tick');
-            }, 1000);
+            }, 5000);
           } else if (e.data === 'stop') {
             if (timer) clearInterval(timer);
             timer = null;
@@ -7129,11 +7460,9 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       worker.onmessage = (e) => {
         if (e.data === 'tick') {
           const now = Date.now();
-          const idleSinceEdits = now - lastLocalEditTime.current > 400;
-          const idleCadence = now - lastRemoteFetchAt.current >= 1000;
-          // Never starve remote notifications while the user is editing locally:
-          // poll at least every 2.5s even during heavy edits, and every ~1s when idle.
-          if ((idleSinceEdits && idleCadence) || now - lastRemoteFetchAt.current >= 2500) {
+          const idleSinceEdits = now - lastLocalEditTime.current > 2000;
+          const idleCadence = now - lastRemoteFetchAt.current >= 10000;
+          if ((idleSinceEdits && idleCadence) || now - lastRemoteFetchAt.current >= 15000) {
             lastRemoteFetchAt.current = now;
             fetchFromOnlineSpreadsheetRef.current(true);
           }
@@ -7144,13 +7473,13 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     } catch {
       fallbackInterval = setInterval(() => {
         const now = Date.now();
-        const idleSinceEdits = now - lastLocalEditTime.current > 400;
-        const idleCadence = now - lastRemoteFetchAt.current >= 1000;
-        if ((idleSinceEdits && idleCadence) || now - lastRemoteFetchAt.current >= 2500) {
+        const idleSinceEdits = now - lastLocalEditTime.current > 2000;
+        const idleCadence = now - lastRemoteFetchAt.current >= 10000;
+        if ((idleSinceEdits && idleCadence) || now - lastRemoteFetchAt.current >= 15000) {
           lastRemoteFetchAt.current = now;
           fetchFromOnlineSpreadsheetRef.current(true);
         }
-      }, 1000);
+      }, 5000);
     }
 
     return () => {
@@ -8041,6 +8370,12 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
         deleteBackupById,
         clearBackupHistory,
         exportBackupToFile,
+        firestoreBackups,
+        isLoadingFirestoreBackups,
+        refreshFirestoreBackups,
+        createFirestoreBackup,
+        restoreFromFirestoreBackup,
+        deleteFirestoreBackupById,
         generateShareableConnectionLink,
         disconnectOnlineSpreadsheet,
         noticeMessage: noticeState.message,
@@ -8171,6 +8506,7 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
         signUpWithEmailAuth,
         sendPasswordResetEmailAuth,
         signOutAuth,
+        deleteCurrentUserAccount,
         registerCompanyWorkspace,
         isFirestoreActive,
         linkCollaboratorWithAuth,

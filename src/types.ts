@@ -583,11 +583,45 @@ export interface IdentifiedUser {
   identifiedAt?: number; // Timestamp in ms when session started (expires in 6 hours)
 }
 
+export interface FirestoreBackupRecord {
+  id: string; // e.g. bkp_workspace_1728000000000 or daily_2026-10-05
+  workspaceId: string;
+  teamName: string;
+  createdAt: string; // ISO
+  createdDate: string; // YYYY-MM-DD
+  createdTime: string; // HH:mm:ss
+  cadenceType: 'daily' | 'interval' | 'manual' | 'safety' | 'recovery';
+  reason: string;
+  collaboratorCount: number;
+  taskCount: number;
+  breakCount: number;
+  shiftCount: number;
+  authorName?: string;
+  stateJson: string; // Full stringified JSON of the AppState for reliable deserialization & rollback
+  metadata?: {
+    sector?: string;
+    manager?: string;
+    shifts?: string[];
+    scaleType?: string;
+    appVersion?: string;
+    spreadsheetUrl?: string;
+  };
+}
+
 export interface AutoBackupSettings {
   enabled: boolean;
   intervalMinutes: number; // e.g. 15, 30, 60, 360, 1440
-  maxRetainSnapshots: number; // e.g. 10, 20, 50
+  scheduleCadence?: 'daily' | 'hourly' | 'interval' | 'manual';
+  dailyBackupTime?: string; // HH:mm para backup diário fixo agendado (ex: "06:00" ou "23:00")
+  saveToFirestore?: boolean; // Habilita persistência periódica / diária no Firestore
+  maxRetainFirestoreBackups?: number; // ex: 7, 14, 30, 60 backups retidos na nuvem
+  maxRetainSnapshots: number; // local snapshots (browser cache)
   lastAutoBackupAt?: string;
+  lastFirestoreBackupAt?: string;
+  lastFirestoreBackupDate?: string; // YYYY-MM-DD para garantir 1 backup diário programado por dia
+  lastFirestoreBackupId?: string;
+  lastFirestoreBackupStatus?: 'success' | 'error';
+  lastFirestoreBackupError?: string;
 }
 
 export interface AuditLogEntry {

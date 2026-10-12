@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { useI18n } from '../i18n';
 import {
   Download,
   Upload,
@@ -22,14 +23,17 @@ import {
   CheckCheck,
   ChevronLeft,
   ChevronRight,
+  Sparkles,
+  Globe,
 } from 'lucide-react';
 import { PageHeader, Card, Toolbar, Button, Badge, Modal, Input } from '../components/ui';
-import { getCollaboratorStatus, getDayOffGroups, getDayHoliday, normalizeCalendarDay } from '../utils/helpers';
+import { getCollaboratorStatus, getDayOffGroups, getDayHoliday, normalizeCalendarDay, formatDateBR } from '../utils/helpers';
 import { isTaskDueOnDate, formatRecurrenceLabel } from '../utils/routineHelpers';
 import { STATUS_BADGE_CLASSES } from '../constants';
 import { Collaborator, ScheduledTask } from '../types';
 import { fetchCalendarEvents, createCalendarEvent, deleteCalendarEvent, CalendarEventItem } from '../lib/workspace';
 import { getAccessToken } from '../lib/firebase';
+import { fetchBrazilianHolidays, HolidayEntry } from '../utils/holidayService';
 
 // Paleta selecionável de cores das turmas. Cada turma criada pelo usuário
 // recebe uma cor da paleta (editável). O `hex` alimenta o fundo dos dias com
@@ -90,6 +94,7 @@ export const CalendarView: React.FC = () => {
     syncTaskToGoogleTasks,
     syncTasksToGoogleWorkspace,
   } = useApp();
+  const { t } = useI18n();
   // Zero turmas por padrão: tudo é criado pelo usuário. Sem fallback A-D.
   const scaleGroups = state.scaleGroups || [];
   const crewDefs = state.scaleGroupDefs || [];
@@ -144,6 +149,53 @@ export const CalendarView: React.FC = () => {
   const [newEventDescription, setNewEventDescription] = useState<string>('');
   const [newEventLocation, setNewEventLocation] = useState<string>('');
   const [isCreatingEvent, setIsCreatingEvent] = useState<boolean>(false);
+
+  // Internet Holidays Import State
+  const [isHolidaysModalOpen, setIsHolidaysModalOpen] = useState<boolean>(false);
+  const [isFetchingHolidays, setIsFetchingHolidays] = useState<boolean>(false);
+  const [fetchedHolidays, setFetchedHolidays] = useState<HolidayEntry[]>([]);
+  const [holidaySource, setHolidaySource] = useState<string>('BrasilAPI');
+  const [selectedHolidayDates, setSelectedHolidayDates] = useState<Set<string>>(new Set());
+  const [holidayAllowWorkMap, setHolidayAllowWorkMap] = useState<Record<string, boolean>>({});
+
+  const handleOpenImportHolidays = async () => {
+    setIsFetchingHolidays(true);
+    try {
+      const res = await fetchBrazilianHolidays(state.year);
+      setFetchedHolidays(res.holidays);
+      setHolidaySource(res.source);
+      setSelectedHolidayDates(new Set(res.holidays.map((h) => h.date)));
+      const initialAllowWork: Record<string, boolean> = {};
+      res.holidays.forEach((h) => {
+        initialAllowWork[h.date] = h.allowWork !== false;
+      });
+      setHolidayAllowWorkMap(initialAllowWork);
+      setIsHolidaysModalOpen(true);
+    } catch (err: any) {
+      showNotice('Erro ao buscar feriados pela internet: ' + (err?.message || err));
+    } finally {
+      setIsFetchingHolidays(false);
+    }
+  };
+
+  const handleApplyImportedHolidays = () => {
+    const toImport = fetchedHolidays.filter((h) => selectedHolidayDates.has(h.date));
+    if (toImport.length === 0) {
+      showNotice('Selecione ao menos um feriado para importar.');
+      return;
+    }
+
+    toImport.forEach((h) => {
+      setDayHoliday(h.date, {
+        title: h.name,
+        isHoliday: true,
+        allowWork: holidayAllowWorkMap[h.date] ?? true,
+      });
+    });
+
+    setIsHolidaysModalOpen(false);
+    showNotice(`🎉 ${toImport.length} feriados de ${state.year} importados com sucesso!`);
+  };
 
   const allScheduledTasks: ScheduledTask[] = useMemo(() => state.scheduledTasks || [], [state.scheduledTasks]);
 
@@ -488,27 +540,39 @@ export const CalendarView: React.FC = () => {
             : 'Visualização — clique em um dia para ver a escala e os dados da data.'
         }
         actions={
-          mode === 'config' ? (
-            <Button
-              variant="primary"
-              size="sm"
-              icon={Check}
-              onClick={() => setMode('view')}
-              title="Concluir configuração e voltar à visualização"
-            >
-              Concluir
-            </Button>
-          ) : (
+          <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
-              icon={Settings}
-              onClick={() => setMode('config')}
-              title="Abrir configuração e edição da escala"
+              icon={Globe}
+              onClick={handleOpenImportHolidays}
+              disabled={isFetchingHolidays}
+              title="Buscar e importar feriados oficiais pela internet (BrasilAPI)"
             >
-              Configurar Escala
+              {isFetchingHolidays ? 'Buscando Feriados...' : 'Importar Feriados'}
             </Button>
-          )
+            {mode === 'config' ? (
+              <Button
+                variant="primary"
+                size="sm"
+                icon={Check}
+                onClick={() => setMode('view')}
+                title="Concluir configuração e voltar à visualização"
+              >
+                Concluir
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                icon={Settings}
+                onClick={() => setMode('config')}
+                title="Abrir configuração e edição da escala"
+              >
+                Configurar Escala
+              </Button>
+            )}
+          </div>
         }
       />
 
@@ -1334,6 +1398,118 @@ export const CalendarView: React.FC = () => {
               />
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* Modal de Importação de Feriados pela Internet (BrasilAPI) */}
+      {isHolidaysModalOpen && (
+        <Modal
+          isOpen={isHolidaysModalOpen}
+          onClose={() => setIsHolidaysModalOpen(false)}
+          title={`Importar Feriados de ${state.year} (Fonte: ${holidaySource})`}
+          icon={<Globe className="w-5 h-5 text-emerald-600" />}
+          size="lg"
+          footer={
+            <div className="flex items-center justify-between w-full">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedHolidayDates.size === fetchedHolidays.length) {
+                      setSelectedHolidayDates(new Set());
+                    } else {
+                      setSelectedHolidayDates(new Set(fetchedHolidays.map((h) => h.date)));
+                    }
+                  }}
+                  className="text-xs font-bold text-[var(--primary)] hover:underline cursor-pointer"
+                >
+                  {selectedHolidayDates.size === fetchedHolidays.length
+                    ? 'Desmarcar Todos'
+                    : 'Selecionar Todos'}
+                </button>
+                <span className="text-[11px] text-[var(--muted)]">
+                  ({selectedHolidayDates.size} de {fetchedHolidays.length} selecionados)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsHolidaysModalOpen(false)}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={Check}
+                  onClick={handleApplyImportedHolidays}
+                  className="!bg-emerald-600 hover:!bg-emerald-700 text-white"
+                >
+                  Importar para o Calendário
+                </Button>
+              </div>
+            </div>
+          }
+        >
+          <div className="space-y-3">
+            <p className="text-xs text-[var(--muted)]">
+              Feriados oficiais consultados via internet. Selecione quais deseja adicionar ao calendário de <strong>{state.year}</strong> e se o turno permite escala de trabalho normal no dia:
+            </p>
+
+            <div className="divide-y divide-[var(--line)] border border-[var(--line)] rounded-xl max-h-96 overflow-y-auto">
+              {fetchedHolidays.map((h) => {
+                const isSelected = selectedHolidayDates.has(h.date);
+                const allowWork = holidayAllowWorkMap[h.date] ?? true;
+
+                return (
+                  <div
+                    key={h.date}
+                    className={`p-2.5 flex items-center justify-between gap-3 text-xs transition-colors ${
+                      isSelected ? 'bg-[var(--surface-2)]' : 'opacity-60'
+                    }`}
+                  >
+                    <label className="flex items-center gap-2.5 min-w-0 cursor-pointer flex-1">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => {
+                          const next = new Set(selectedHolidayDates);
+                          if (e.target.checked) next.add(h.date);
+                          else next.delete(h.date);
+                          setSelectedHolidayDates(next);
+                        }}
+                        className="w-4 h-4 rounded text-emerald-600 cursor-pointer"
+                      />
+                      <div className="min-w-0">
+                        <div className="font-bold text-[var(--ink)] truncate">{h.name}</div>
+                        <div className="text-[10px] text-[var(--muted)] font-mono">
+                          {formatDateBR(h.date)} • {h.type ? h.type.toUpperCase() : 'OFICIAL'}
+                        </div>
+                      </div>
+                    </label>
+
+                    {isSelected && (
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--ink)] cursor-pointer shrink-0 bg-[var(--paper)] px-2 py-1 rounded-lg border border-[var(--line)]">
+                        <input
+                          type="checkbox"
+                          checked={allowWork}
+                          onChange={(e) => {
+                            setHolidayAllowWorkMap((prev) => ({
+                              ...prev,
+                              [h.date]: e.target.checked,
+                            }));
+                          }}
+                          className="w-3.5 h-3.5 rounded text-emerald-600 cursor-pointer"
+                        />
+                        <span>Trabalho Permitido</span>
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </Modal>
       )}
     </div>

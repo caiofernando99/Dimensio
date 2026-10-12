@@ -210,9 +210,9 @@ export const PresenceApiModal: React.FC<PresenceApiModalProps> = ({
   if (!isOpen) return null;
 
   const baseUrl = window.location.origin;
-  const apiUrlGet = `${baseUrl}/api/presence?date=${selectedDate}${shiftFilter !== 'ALL' ? `&shift=${shiftFilter}` : ''}${scaleFilter !== 'ALL' ? `&scale=${scaleFilter}` : ''}&format=${format}`;
-  const apiUrlPost = `${baseUrl}/api/presence`;
-  const apiUrlWebhook = `${baseUrl}/api/presence/webhook`;
+  const apiUrlGet = `${baseUrl}/api/v1/presence?date=${selectedDate}${shiftFilter !== 'ALL' ? `&shift=${shiftFilter}` : ''}${scaleFilter !== 'ALL' ? `&scale=${scaleFilter}` : ''}&format=${format}`;
+  const apiUrlPost = `${baseUrl}/api/v1/presence`;
+  const apiUrlWebhook = `${baseUrl}/api/v1/presence/webhook`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 animate-in fade-in duration-200">

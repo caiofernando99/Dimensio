@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IndusMES — Telemetria de Chão de Fábrica & OEE</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #0b1329; color: #f8fafc; }
+  </style>
+</head>
+<body class="p-4 sm:p-6 min-h-screen">
+  <!-- Top Navigation -->
+  <div class="max-w-6xl mx-auto bg-slate-900 border border-slate-800 text-white p-4 rounded-xl flex items-center justify-between shadow-md mb-6">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center font-black text-sm">MES</div>
+      <div>
+        <div class="text-sm font-black tracking-wide">INDUSMES INDUSTRIAL · MONITORAMENTO CHÃO DE FÁBRICA</div>
+        <div class="text-[11px] text-slate-400">Planta 02 · Linha Automatizada de Montagem & Embalagem</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-3 text-xs">
+      <span class="px-2.5 py-1 rounded bg-slate-800 text-emerald-400 font-mono">Turno: T1 Manhã</span>
+      <span class="px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">OPERANDO</span>
+      <a href="/test-sandbox/index.html" class="text-slate-400 hover:text-white ml-2 text-xs">← Voltar ao Sandbox</a>
+    </div>
+  </div>
+
+  <main class="max-w-6xl mx-auto space-y-6">
+    <!-- Diagnostic Header -->
+    <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+      <div class="flex items-center gap-2">
+        <span class="text-lg">🏭</span>
+        <div>
+          <span class="font-black text-white">Telemetria de Máquinas & Produção:</span>
+          <span class="text-slate-400 ml-1">Use a extensão Dimensio para capturar indicadores de OEE ou destacar operadores em cada posto.</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="simulateTelemetryCycle()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-colors shadow-xs">
+          Simular Ciclo de Injeção
+        </button>
+      </div>
+    </div>
+
+    <!-- Live Industrial Metrics (Ready for Dimensio Metric Extraction) -->
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-4">
+      <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-xs">
+        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">OEE Global</div>
+        <div id="metric-oee-global" class="text-2xl font-black text-emerald-400 mt-1">88.4%</div>
+        <div class="text-[10px] text-slate-500 font-mono mt-0.5">#metric-oee-global</div>
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-xs">
+        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Disponibilidade</div>
+        <div id="metric-disponibilidade" class="text-2xl font-black text-blue-400 mt-1">94.1%</div>
+        <div class="text-[10px] text-slate-500 font-mono mt-0.5">#metric-disponibilidade</div>
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-xs">
+        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Performance</div>
+        <div id="metric-performance" class="text-2xl font-black text-amber-400 mt-1">91.7%</div>
+        <div class="text-[10px] text-slate-500 font-mono mt-0.5">#metric-performance</div>
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-xs">
+        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Qualidade</div>
+        <div id="metric-qualidade" class="text-2xl font-black text-violet-400 mt-1">99.2%</div>
+        <div class="text-[10px] text-slate-500 font-mono mt-0.5">#metric-qualidade</div>
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-xs">
+        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Produção (Peças/h)</div>
+        <div id="metric-pecas-hora" class="text-2xl font-black text-white mt-1">1.240 un/h</div>
+        <div class="text-[10px] text-slate-500 font-mono mt-0.5">#metric-pecas-hora</div>
+      </div>
+    </div>
+
+    <!-- Production Cells & Operator Stations Table -->
+    <div class="bg-slate-900 rounded-xl border border-slate-800 shadow-xs overflow-hidden">
+      <div class="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+        <h3 class="text-xs font-black uppercase tracking-wider text-slate-300">
+          Células de Manufatura & Operadores Alocados
+        </h3>
+        <span class="text-[11px] text-slate-500">Mapeamento para o módulo Dimensionamento do Dimensio</span>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-950 text-slate-400 border-b border-slate-800 font-bold">
+            <tr>
+              <th class="p-3">Célula / Estação</th>
+              <th class="p-3">Operador(a) Responsável</th>
+              <th class="p-3">Matrícula</th>
+              <th class="p-3">Status da Máquina</th>
+              <th class="p-3 text-right">Produzido no Turno</th>
+            </tr>
+          </thead>
+          <tbody id="productionTableBody" class="divide-y divide-slate-800 text-slate-300 font-medium">
+            <tr class="hover:bg-slate-800/50">
+              <td class="p-3 font-mono font-bold text-emerald-400">INJ-01 (Injetora Principal)</td>
+              <td class="p-3 font-bold text-white">Marcos Vinicius Alves (fictício)</td>
+              <td class="p-3 font-mono text-slate-400">IND-201</td>
+              <td class="p-3 text-emerald-400 font-bold">● Produzindo Ciclo Normal</td>
+              <td class="p-3 text-right font-mono font-bold text-white">4.820 un</td>
+            </tr>
+            <tr class="hover:bg-slate-800/50">
+              <td class="p-3 font-mono font-bold text-emerald-400">INJ-02 (Injetora Secundária)</td>
+              <td class="p-3 font-bold text-white">Patricia Mendes Santos (fictícia)</td>
+              <td class="p-3 font-mono text-slate-400">IND-202</td>
+              <td class="p-3 text-emerald-400 font-bold">● Produzindo Ciclo Normal</td>
+              <td class="p-3 text-right font-mono font-bold text-white">3.950 un</td>
+            </tr>
+            <tr class="hover:bg-slate-800/50">
+              <td class="p-3 font-mono font-bold text-amber-400">EMB-01 (Linha de Embalagem)</td>
+              <td class="p-3 font-bold text-white">Thiago Barbosa Rocha (fictício)</td>
+              <td class="p-3 font-mono text-slate-400">IND-203</td>
+              <td class="p-3 text-amber-400 font-bold">⚠️ Aguardando Lote de Paletes</td>
+              <td class="p-3 text-right font-mono font-bold text-white">2.110 un</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function simulateTelemetryCycle() {
+      const oee = (86 + Math.random() * 8).toFixed(1);
+      const disp = (92 + Math.random() * 6).toFixed(1);
+      const perf = (89 + Math.random() * 7).toFixed(1);
+      const qual = (98 + Math.random() * 1.9).toFixed(1);
+      const pecas = Math.floor(1150 + Math.random() * 250);
+
+      document.getElementById('metric-oee-global').innerText = oee + '%';
+      document.getElementById('metric-disponibilidade').innerText = disp + '%';
+      document.getElementById('metric-performance').innerText = perf + '%';
+      document.getElementById('metric-qualidade').innerText = qual + '%';
+      document.getElementById('metric-pecas-hora').innerText = pecas.toLocaleString('pt-BR') + ' un/h';
+    }
+  </script>
+</body>
+</html>

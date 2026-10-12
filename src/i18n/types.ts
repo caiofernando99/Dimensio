@@ -1,7 +1,7 @@
-export type Language = 'pt' | 'es' | 'en';
+export type Language = 'pt' | 'es' | 'en' | 'fr' | 'de' | (string & {});
 
 export interface LanguageOption {
-  code: Language;
+  code: string;
   label: string;
   nativeName: string;
   flag: string;
@@ -11,6 +11,8 @@ export const AVAILABLE_LANGUAGES: LanguageOption[] = [
   { code: 'pt', label: 'Português', nativeName: 'Português (Brasil)', flag: '🇧🇷' },
   { code: 'es', label: 'Espanhol', nativeName: 'Español', flag: '🇪🇸' },
   { code: 'en', label: 'Inglês', nativeName: 'English', flag: '🇺🇸' },
+  { code: 'fr', label: 'Francês', nativeName: 'Français', flag: '🇫🇷' },
+  { code: 'de', label: 'Alemão', nativeName: 'Deutsch', flag: '🇩🇪' },
 ];
 
 export interface Translations {
@@ -500,5 +502,81 @@ export interface Translations {
     safetyNotice: string;
     dailyTargets: string;
     absentSummary: string;
+  };
+  home: {
+    title: string;
+    subtitle: string;
+    overviewTab: string;
+    monitorTab: string;
+    totalCollaborators: string;
+    presentToday: string;
+    stationOccupancy: string;
+    absenteeismRate: string;
+    quickActions: string;
+    manageTeam: string;
+    scheduleScale: string;
+    assignStations: string;
+    distributeBreaks: string;
+    viewReports: string;
+    systemSettings: string;
+    activeShifts: string;
+    noActiveShifts: string;
+    unassignedCollaborators: string;
+    allAssignedNotice: string;
+    operationalStatus: string;
+    dateRange: string;
+    refreshDashboard: string;
+    filterBySector: string;
+    filterByShift: string;
+    filterByScaleGroup: string;
+    criticalAlerts: string;
+    noCriticalAlerts: string;
+  };
+  backups: {
+    title: string;
+    subtitle: string;
+    protectionBannerTitle: string;
+    protectionBannerDesc: string;
+    autoBackupLabel: string;
+    autoBackupSub: string;
+    saveToFirestoreLabel: string;
+    saveToFirestoreSub: string;
+    scheduleCadenceLabel: string;
+    dailyCadence: string;
+    intervalCadence: string;
+    hourlyCadence: string;
+    manualCadence: string;
+    dailyTimeLabel: string;
+    dailyTimeSub: string;
+    intervalMinutesLabel: string;
+    firestoreRetentionLabel: string;
+    localRetentionLabel: string;
+    lastFirestoreBackupLabel: string;
+    lastLocalBackupLabel: string;
+    createFirestoreBackupNow: string;
+    refreshList: string;
+    filterAll: string;
+    filterDaily: string;
+    filterInterval: string;
+    filterManual: string;
+    filterRecovery: string;
+    noFirestoreBackups: string;
+    noFirestoreBackupsSub: string;
+    createFirstCloudBackup: string;
+    colDateTime: string;
+    colCadence: string;
+    colReason: string;
+    colData: string;
+    colAuthor: string;
+    colActions: string;
+    restoreBtn: string;
+    downloadJsonBtn: string;
+    deleteBtn: string;
+    confirmRestoreTitle: string;
+    confirmRestoreDesc: string;
+    confirmRestoreBtn: string;
+    restoreSuccessNotice: string;
+    saveSuccessNotice: string;
+    manualPointLabel: string;
   };
 }

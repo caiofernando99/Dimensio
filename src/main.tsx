@@ -15,14 +15,16 @@ document.documentElement.setAttribute('data-dimensio-app', '1');
 
 // Safety net for stale PWA caches: after a redeploy the old bundle may try to
 // lazy-load chunks that no longer exist (404 -> "Failed to fetch dynamically
-// imported module"), which crashes the app. Reload once to pick up the new build.
-let reloadedOnChunkError = false;
+// imported module"). Guard with sessionStorage so it never loops infinitely.
 window.addEventListener('unhandledrejection', (e) => {
   const desc = (e.reason as Error)?.message || String(e.reason);
   if (/Failed to fetch dynamically imported module|Importing a module script failed/i.test(desc)) {
-    if (!reloadedOnChunkError) {
-      reloadedOnChunkError = true;
+    const lastReload = Number(sessionStorage.getItem('dimensio_last_chunk_reload') || 0);
+    if (Date.now() - lastReload > 30000) {
+      sessionStorage.setItem('dimensio_last_chunk_reload', String(Date.now()));
       window.location.reload();
+    } else {
+      console.warn('[Dimensio] Dynamic import failed, reload prevented to avoid infinite loop:', desc);
     }
   }
 });
