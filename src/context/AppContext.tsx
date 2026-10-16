@@ -591,7 +591,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [state, setState] = useState<AppState>(() => {
     try {
-      const saved = getAppStorage().getItem(STORAGE_KEY);
+      let saved = getAppStorage().getItem(STORAGE_KEY);
+      if (!saved && typeof localStorage !== 'undefined') {
+        saved = localStorage.getItem(STORAGE_KEY);
+      }
       if (saved) {
         const parsed = JSON.parse(saved);
         if (
@@ -599,6 +602,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           parsed.teamName === 'Centro de Distribuição Cajamar' ||
           parsed.teamName === 'Operação Logística Multissetorial'
         ) {
+          try { localStorage.removeItem(STORAGE_KEY); } catch {}
           getAppStorage().removeItem(STORAGE_KEY);
           return {
             ...initialAppState,
@@ -1258,6 +1262,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const jsonStr = JSON.stringify(state);
       getAppStorage().setItem(STORAGE_KEY, jsonStr);
+      try {
+        localStorage.setItem(STORAGE_KEY, jsonStr);
+      } catch {}
 
       if (liveBcRef.current && !isRemoteOrBroadcastUpdate.current) {
         liveBcRef.current.postMessage({ type: 'STATE_UPDATED', state, senderId: tabId.current });

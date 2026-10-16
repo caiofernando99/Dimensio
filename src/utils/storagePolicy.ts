@@ -24,7 +24,7 @@ export interface SessionConfig {
 export const SESSION_CONFIG_KEY = 'dimensio_session_config_v1';
 
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
-  sessionOnly: true,
+  sessionOnly: false, // Persistente por padrão no navegador (localStorage) para não perder escalas, cores e dados
   alwaysOnline: false,
   allowAnonymousAccess: true,
 };
@@ -33,8 +33,8 @@ let activeStorage: Storage | null = null;
 
 function detectDefaultStorage(): Storage {
   try {
-    if (typeof sessionStorage !== 'undefined') return sessionStorage;
     if (typeof localStorage !== 'undefined') return localStorage;
+    if (typeof sessionStorage !== 'undefined') return sessionStorage;
   } catch {
     // ignore
   }
@@ -54,7 +54,7 @@ export function readSessionConfig(): SessionConfig {
     if (raw) {
       const p = JSON.parse(raw);
       return {
-        sessionOnly: p.sessionOnly !== false,
+        sessionOnly: p.sessionOnly === true,
         alwaysOnline: p.alwaysOnline === true,
         allowAnonymousAccess: p.allowAnonymousAccess !== false,
       };

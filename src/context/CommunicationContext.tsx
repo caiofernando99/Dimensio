@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useApp } from './AppContext';
 import type { CommChannel, CommPeerInfo, RemotePeerState, SignalMessage, AudioMode } from '../communication/types';
+import type { Task } from '../types';
 import { generateId } from '../utils/helpers';
 import { playRadioPttChirp, setRadioSfxConfig, getRadioSfxConfig } from '../utils/audioAlert';
 import { showNativeOSNotification } from '../utils/notifications';
@@ -8,7 +9,7 @@ import { loadRadioStateDB, saveRadioStateDB } from '../utils/radioStoreDB';
 import { triggerRadioBackgroundSync } from '../registerSW';
 import { mediaKeepalive } from '../utils/mediaKeepalive';
 import {
-  isFirestoreQuotaExceeded,
+  clearFirestoreQuotaExceeded,
   sendFirestoreRadioSignals,
   subscribeToFirestoreRadioSignals,
   updateRadioCloudPresence,
@@ -66,6 +67,10 @@ export interface CommContextType {
   setAudioOutputDevice: (deviceId: string) => Promise<boolean>;
   toggleLoudspeaker: () => Promise<boolean>;
   refreshAudioOutputDevices: () => Promise<void>;
+  myAssignedTasks: Task[];
+  myCurrentTask: Task | null;
+  forceReconnect: () => void;
+  getDiagnostics: () => any;
 }
 
 const CommContext = createContext<CommContextType | undefined>(undefined);
@@ -114,11 +119,11 @@ function buildRtcConfig(customTurn: string | undefined): RTCConfiguration {
 
 const POLL_MS = 2500;
 const HEARTBEAT_MS = 8000;
-const PEER_TTL_MS = 18000; // 18s TTL elimina imediatamente colaboradores fantasmas
+const PEER_TTL_MS = 55000; // 55s TTL para suportar segundo plano móvel sem desconectar
 const SEEN_PRUNE = 4000;
 const RETRY_INTERVAL_MS = 4000;
 const VOICE_THRESHOLD = 0.015;
-const VOICE_HOLD_MS = 1000;
+const VOICE_HOLD_MS = 4000;
 const VOICE_POLL_MS = 250;
 
 interface ConnEntry {
@@ -130,6 +135,7 @@ interface ConnEntry {
   lastOffer?: number;
   polite: boolean;
   makingOffer?: boolean;
+  isSettingRemoteAnswer?: boolean;
   pendingCandidates?: RTCIceCandidateInit[];
 }
 
@@ -169,6 +175,11 @@ function createSilentWavBlobUrl(): string {
 
 export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { state, identifiedUser, showNotice } = useApp();
+
+  // Limpa travas residuais de cota do Firestore no carregamento
+  useEffect(() => {
+    clearFirestoreQuotaExceeded();
+  }, []);
 
   const webhookUrl = state.onlineSpreadsheet?.webhookUrl?.trim() || '/api/signal';
   const [enabled, setEnabledState] = useState<boolean>(() => {
@@ -590,23 +601,59 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [resolveCurrentIdentity]);
 
+  // Auto-atribuição dinâmica ao canal da(s) tarefa(s) atribuída(s)
+  const myAssignedTasks = useMemo(() => {
+    const identity = resolveCurrentIdentity();
+    const collabId = identity.id && !identity.id.startsWith('anon_') ? identity.id : '';
+    if (!collabId) return [];
+    return state.tasks.filter((t) => t.active !== false && t.members.includes(collabId));
+  }, [resolveCurrentIdentity, state.tasks]);
+
+  const myCurrentTask = myAssignedTasks.length > 0 ? myAssignedTasks[0] : null;
+  const prevMyTaskIdsRef = useRef<string[]>([]);
+
   useEffect(() => {
-    const collabId = identifiedUser ? String(identifiedUser.collaboratorId || identifiedUser.id) : '';
-    const myTask = collabId ? state.tasks.find((t) => t.members.includes(collabId)) : undefined;
-    const desired = ['geral', ...(myTask ? [`task:${myTask.id}`] : [])];
+    const taskChannelIds = myAssignedTasks.map((t) => `task:${t.id}`);
+    const desired = Array.from(new Set(['geral', ...taskChannelIds]));
+
+    // Detecta se a atribuição de tarefas do operador mudou
+    const currentTaskIds = myAssignedTasks.map((t) => t.id).sort();
+    const prevTaskIds = [...prevMyTaskIdsRef.current].sort();
+    const hasChanged =
+      currentTaskIds.length !== prevTaskIds.length ||
+      currentTaskIds.some((id, idx) => id !== prevTaskIds[idx]);
+
+    if (hasChanged) {
+      prevMyTaskIdsRef.current = myAssignedTasks.map((t) => t.id);
+      if (myAssignedTasks.length > 0) {
+        const primaryTask = myAssignedTasks[0];
+        // Sincroniza canal ativo automaticamente para o canal da tarefa
+        setActiveChannel(`task:${primaryTask.id}`);
+        showNotice(
+          `📻 Conectado ao canal da sua tarefa: "${primaryTask.name}". Coordene com seus colegas de tarefa sem ocupar o canal Geral!`,
+          'Mudar para Geral',
+          () => setActiveChannel('geral'),
+          'info'
+        );
+      } else {
+        setActiveChannel('geral');
+      }
+    }
 
     setSubscribedChannels((prev) => {
-      if (prev.length === desired.length && prev.every((val, index) => val === desired[index])) {
+      const directChs = prev.filter((c) => c.startsWith('direct:'));
+      const combined = Array.from(new Set([...desired, ...directChs]));
+      if (prev.length === combined.length && prev.every((val, index) => val === combined[index])) {
         return prev;
       }
-      subscribedRef.current = desired;
-      return desired;
+      subscribedRef.current = combined;
+      return combined;
     });
 
     if (!activeChannel) {
-      setActiveChannel('geral');
+      setActiveChannel(myAssignedTasks.length > 0 ? `task:${myAssignedTasks[0].id}` : 'geral');
     }
-  }, [identifiedUser, state.tasks, activeChannel]);
+  }, [myAssignedTasks, activeChannel, showNotice]);
 
   const setupAudioAnalyzer = useCallback((stream: MediaStream) => {
     try {
@@ -621,6 +668,15 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
+
+      // Roteia o microfone com ganho zero para a saída (destination)
+      // Mantém o stream de áudio do Android/Chrome ativo como serviço de voz em segundo plano
+      try {
+        const silentGain = ctx.createGain();
+        silentGain.gain.setValueAtTime(0, ctx.currentTime);
+        source.connect(silentGain);
+        silentGain.connect(ctx.destination);
+      } catch {}
 
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
@@ -695,7 +751,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     const on = computeMicOn();
     const currentTargetCh = activeChannelRef.current || 'geral';
 
-    // Enable/disable the hardware track
+    // 1. Ativa ou desativa a trilha física de captura do microfone local
     if (micTrackRef.current) {
       try {
         micTrackRef.current.enabled = on;
@@ -709,16 +765,20 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       });
     }
 
-    // Direct channel routing: enable senders matching current active channel
+    // 2. Roteamento nos pares WebRTC:
+    // Conectamos a trilha do microfone via replaceTrack para os pares do canal ativo quando falando (on),
+    // e limpamos com replaceTrack(null) nos outros canais.
+    // NUNCA alteramos s.track.enabled = false aqui, pois s.track é a mesma instância compartilhada!
     connectionsRef.current.forEach((entry) => {
       const isTargetChannel = entry.channelId === currentTargetCh;
       const pc = entry.pc;
       if (pc.connectionState !== 'closed') {
         pc.getSenders().forEach((s) => {
-          if (s.track) {
-            try {
-              s.track.enabled = on && isTargetChannel;
-            } catch {}
+          if (s.track !== undefined) {
+            const desiredTrack = (on && isTargetChannel) ? (micTrackRef.current || null) : null;
+            if (s.track !== desiredTrack) {
+              s.replaceTrack(desiredTrack).catch(() => {});
+            }
           }
         });
       }
@@ -944,97 +1004,17 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       clearInterval(keepaliveIntervalRef.current);
       keepaliveIntervalRef.current = null;
     }
-    const el = liveAudioElRef.current;
-    if (el) {
-      try { el.pause(); } catch {}
-      try { el.srcObject = null; } catch {}
-      try { el.remove(); } catch {}
-      liveAudioElRef.current = null;
-    }
-    if (liveStreamSourceRef.current) {
-      try { liveStreamSourceRef.current.stop(); } catch {}
-      try { liveStreamSourceRef.current.disconnect(); } catch {}
-      liveStreamSourceRef.current = null;
-    }
-    if (liveStreamDestRef.current) {
-      try { liveStreamDestRef.current.disconnect(); } catch {}
-      liveStreamDestRef.current = null;
-    }
-    if (liveStreamCtxRef.current) {
-      try { liveStreamCtxRef.current.close(); } catch {}
-      liveStreamCtxRef.current = null;
-    }
-    if ('mediaSession' in navigator) {
-      try {
-        navigator.mediaSession.playbackState = 'none';
-      } catch {}
-    }
   }, []);
 
-  // Background Live Broadcast Engine:
-  // Connects a continuous inaudible WAV audio loop via HTML5 <audio autoplay playsinline loop> element.
-  // This continuous live audio session ensures Android AudioFlinger keeps the background
-  // audio session, network sockets, and WebRTC audio running 24/7 without being frozen.
+  // Background Live Broadcast Engine unificado com mediaKeepalive
   const startLiveBroadcast = useCallback(() => {
     if (!enabledRef.current) return;
-
-    try {
-      let el = liveAudioElRef.current;
-      if (!el) {
-        el = document.createElement('audio');
-        el.setAttribute('playsinline', 'true');
-        el.setAttribute('autoplay', 'true');
-        el.setAttribute('loop', 'true');
-        el.setAttribute('id', 'dimensio-live-broadcast-stream');
-        el.style.position = 'fixed';
-        el.style.width = '0';
-        el.style.height = '0';
-        el.style.opacity = '0';
-        el.style.pointerEvents = 'none';
-        document.body.appendChild(el);
-        liveAudioElRef.current = el;
-      }
-
-      if (!silentWavBlobUrlRef.current) {
-        silentWavBlobUrlRef.current = createSilentWavBlobUrl();
-      }
-
-      if (el.src !== silentWavBlobUrlRef.current) {
-        el.src = silentWavBlobUrlRef.current;
-      }
-
-      el.loop = true;
-      el.volume = 0.05; // Audible threshold for Android Chrome background media session
-      el.muted = false;
-
-      el.play().then(() => {
-        setAudioBlocked(false);
-      }).catch(() => {
-        setAudioBlocked(true);
-      });
-    } catch (err) {
-      console.warn('[Live Broadcast] Erro ao iniciar:', err);
-    }
-
-    const checkAndKeepPlaying = () => {
-      if (!enabledRef.current) return;
-      const el = liveAudioElRef.current;
-      if (el && (el.paused || el.ended)) {
-        if (!el.src && silentWavBlobUrlRef.current) {
-          el.src = silentWavBlobUrlRef.current;
-        }
-        el.play().then(() => setAudioBlocked(false)).catch(() => {});
-      }
-      audioElsRef.current.forEach((a) => {
-        if (a.srcObject && a.paused) {
-          a.play().catch(() => {});
-        }
-      });
-    };
-
-    if (!keepaliveIntervalRef.current) {
-      keepaliveIntervalRef.current = setInterval(checkAndKeepPlaying, 1000);
-    }
+    mediaKeepalive.start(activeChannelRef.current || 'Geral').then((ok) => {
+      if (ok) setAudioBlocked(false);
+    }).catch(() => {
+      setAudioBlocked(true);
+    });
+    mediaKeepalive.ensurePlaying();
   }, []);
 
   useEffect(() => {
@@ -1216,10 +1196,8 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         bcRef.current.postMessage(safeMessages);
       } catch {}
     }
-    if (!isFirestoreQuotaExceeded()) {
-      sendFirestoreRadioSignals(safeMessages);
-    }
-
+    // Envio ultrarrápido para o barramento local /api/signal (0 custo de Firestore)
+    sendFirestoreRadioSignals(safeMessages);
     if (workerRef.current) {
       try {
         workerRef.current.postMessage({ type: 'outbox', messages: safeMessages });
@@ -1443,15 +1421,28 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       if (!peerIdRef.current || peer.id === peerIdRef.current) return;
       const key = `${channelId}|${peer.id}`;
 
-      // Smaller peerId initiates deterministic offer
-      if (peer.id < peerIdRef.current) return;
-
       const existing = connectionsRef.current.get(key);
       if (existing && existing.pc.connectionState !== 'failed' && existing.pc.connectionState !== 'closed') return;
 
-      // Establish connection immediately (audio transceiver is ready); attach mic stream asynchronously
-      acquireMic().catch(() => {});
+      // Garante que o microfone está ativo ANTES de gerar a oferta para incluir a trilha no SDP
+      let stream = micStreamRef.current;
+      if (!stream) {
+        stream = await acquireMic();
+      }
       const entry = createPc(peer.id, channelId, key, () => {});
+      if (stream) {
+        const track = stream.getAudioTracks()[0];
+        if (track) {
+          const audioSender = entry.pc.getSenders().find((s) => s.track?.kind === 'audio' || !s.track);
+          if (audioSender) {
+            if (audioSender.track !== track) {
+              await audioSender.replaceTrack(track).catch(() => {});
+            }
+          } else {
+            try { entry.pc.addTrack(track, stream); } catch {}
+          }
+        }
+      }
       sendOffer(entry);
     },
     [acquireMic, createPc, sendOffer]
@@ -1508,23 +1499,21 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           playRadioPttChirp('incoming');
           setRemoteTransmitting(true);
           remoteTransmittingRef.current = true;
+          if (remoteMonitorRef.current) {
+            remoteMonitorRef.current.lastVoiceAt = Date.now();
+          }
           const speakerName = msg.senderName && msg.senderName !== '—'
             ? msg.senderName
             : (msg.sender.startsWith('anon') ? 'Operador Convidado (Guest)' : 'Operador');
           setActiveSpeakerName(speakerName);
           resumeAllAudio();
-          // If the app is minimized (background on Android), notify the operator immediately
-          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+          // Notifica APENAS em Canais Diretos (DM privado), evitando spam sonoro a cada toque no Geral
+          if (msg.channel.startsWith('direct:') && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
             const speaker = speakerName;
-            const chName = msg.channel.startsWith('direct:')
-              ? 'Canal Direto'
-              : msg.channel === 'geral'
-              ? 'Geral'
-              : msg.channel.replace('sector:', 'Setor: ').replace('task:', 'Tarefa: ');
-            showNativeOSNotification(`📻 ${speaker} falando no Rádio`, {
-              body: `Canal: ${chName}. Transmissão em andamento.`,
-              tag: 'dimensio-radio-speaking',
-              vibrate: [200, 100, 200],
+            showNativeOSNotification(`📞 Chamada Direta de ${speaker}`, {
+              body: `${speaker} está falando com você em canal direto privado.`,
+              tag: 'dimensio-radio-direct',
+              vibrate: [300, 150, 300, 150, 300],
             });
           }
           setRemotePeersMap((prev) => {
@@ -1680,9 +1669,8 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         }
         if (msg.to && msg.to !== peerIdRef.current) return;
-        (async () => {
-          const offerSdp = (msg.payload as { sdp?: RTCSessionDescriptionInit }).sdp || (msg.payload as RTCSessionDescriptionInit);
 
+        (async () => {
           let conn = connectionsRef.current.get(key);
           if ((conn && conn.pc.connectionState === 'failed') || (conn && conn.pc.connectionState === 'closed')) {
             try { conn.pc.close(); } catch {}
@@ -1692,18 +1680,39 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
 
           if (!conn) {
             conn = createPc(msg.sender, channelId, key, () => {});
-            // Asynchronously attach mic track without blocking answer generation
-            acquireMic().then((stream) => {
-              if (stream && conn && conn.pc.connectionState !== 'closed' && conn.pc.getSenders().length === 0) {
-                const track = stream.getAudioTracks()[0];
-                if (track) {
-                  try { conn.pc.addTrack(track, stream); } catch {}
+          }
+
+          // Garante que o microfone local está associado ANTES de gerar a resposta (answer SDP sendrecv)
+          let stream = micStreamRef.current;
+          if (!stream) {
+            stream = await acquireMic();
+          }
+          if (stream && conn) {
+            const track = stream.getAudioTracks()[0];
+            if (track) {
+              const audioSender = conn.pc.getSenders().find((s) => s.track?.kind === 'audio' || !s.track);
+              if (audioSender) {
+                if (audioSender.track !== track) {
+                  await audioSender.replaceTrack(track).catch(() => {});
                 }
+              } else {
+                try { conn.pc.addTrack(track, stream); } catch {}
               }
-            }).catch(() => {});
+            }
           }
 
           try {
+            const rawPayload = msg.payload as any;
+            const offerObj = rawPayload?.sdp || rawPayload;
+            const offerSdp: RTCSessionDescriptionInit =
+              offerObj && typeof offerObj === 'object' && offerObj.sdp
+                ? { type: 'offer', sdp: offerObj.sdp }
+                : typeof offerObj === 'string'
+                ? { type: 'offer', sdp: offerObj }
+                : (offerObj as RTCSessionDescriptionInit);
+
+            if (!offerSdp || !offerSdp.sdp) return;
+
             const currentState = conn.pc.signalingState;
             if (currentState === 'have-remote-offer') return;
 
@@ -1715,30 +1724,35 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
               }
             }
 
-            await conn.pc.setRemoteDescription(offerSdp as RTCSessionDescriptionInit);
-            drainCandidates(conn);
-            const answer = await conn.pc.createAnswer();
-            await conn.pc.setLocalDescription(answer);
-            await awaitGathered(conn.pc);
-            conn.status = 'connecting';
-            const answerLocalDesc = conn.pc.localDescription;
-            const answerSdpObj = answerLocalDesc
-              ? (typeof answerLocalDesc.toJSON === 'function' ? answerLocalDesc.toJSON() : { type: answerLocalDesc.type, sdp: answerLocalDesc.sdp })
-              : answer;
-            sendSignals([{
-              mid: generateId(),
-              kind: 'answer',
-              sender: peerIdRef.current,
-              senderName: peerNameRef.current,
-              senderRole: peerRoleRef.current,
-              to: msg.sender,
-              channel: channelId,
-              payload: { sdp: answerSdpObj },
-              ts: Date.now(),
-            }]);
-            setRemotePeersMap((prev) => ({ ...prev }));
-          } catch (err) {
-            console.warn('Offer handling error:', err);
+            if (conn.pc.signalingState === 'stable' || conn.pc.signalingState === 'have-local-pranswer') {
+              await conn.pc.setRemoteDescription(new RTCSessionDescription(offerSdp));
+              drainCandidates(conn);
+              const answer = await conn.pc.createAnswer();
+              await conn.pc.setLocalDescription(answer);
+              await awaitGathered(conn.pc);
+              conn.status = 'connecting';
+              const answerLocalDesc = conn.pc.localDescription;
+              const answerSdpObj = answerLocalDesc
+                ? (typeof answerLocalDesc.toJSON === 'function' ? answerLocalDesc.toJSON() : { type: answerLocalDesc.type, sdp: answerLocalDesc.sdp })
+                : answer;
+
+              sendSignals([{
+                mid: generateId(),
+                kind: 'answer',
+                sender: peerIdRef.current,
+                senderName: peerNameRef.current,
+                senderRole: peerRoleRef.current,
+                to: msg.sender,
+                channel: channelId,
+                payload: { sdp: answerSdpObj },
+                ts: Date.now(),
+              }]);
+              setRemotePeersMap((prev) => ({ ...prev }));
+            }
+          } catch (err: any) {
+            if (err?.name !== 'InvalidStateError') {
+              console.warn('Offer handling notice:', err);
+            }
           }
         })();
         return;
@@ -1747,17 +1761,39 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       if (msg.kind === 'answer') {
         if (!entry) return;
         if (msg.to && msg.to !== peerIdRef.current) return;
+        // Se já estabilizado ou fechado, ignora respostas duplicadas sem lançar exceção
+        if (entry.isSettingRemoteAnswer || entry.pc.signalingState !== 'have-local-offer') {
+          return;
+        }
+        entry.isSettingRemoteAnswer = true;
+
         (async () => {
           try {
-            if (entry.pc.signalingState === 'have-local-offer') {
-              const answerSdp = msg.payload as { sdp?: RTCSessionDescriptionInit };
-              await entry.pc.setRemoteDescription(answerSdp.sdp || (answerSdp as unknown as RTCSessionDescriptionInit));
-              drainCandidates(entry);
-              entry.status = 'connected';
-              setRemotePeersMap((prev) => ({ ...prev }));
+            if (entry.pc.signalingState !== 'have-local-offer') {
+              return;
             }
-          } catch (err) {
-            console.warn('Answer handling error:', err);
+            const rawPayload = msg.payload as any;
+            const answerObj = rawPayload?.sdp || rawPayload;
+            const desc: RTCSessionDescriptionInit =
+              answerObj && typeof answerObj === 'object' && answerObj.sdp
+                ? { type: 'answer', sdp: answerObj.sdp }
+                : typeof answerObj === 'string'
+                ? { type: 'answer', sdp: answerObj }
+                : (answerObj as RTCSessionDescriptionInit);
+
+            if (!desc || !desc.sdp) return;
+            await entry.pc.setRemoteDescription(new RTCSessionDescription(desc));
+            drainCandidates(entry);
+            entry.status = 'connected';
+            entry.makingOffer = false;
+            setRemotePeersMap((prev) => ({ ...prev }));
+          } catch (err: any) {
+            // Ignora silenciosamente corridas onde o estado já foi estabilizado
+            if (err?.name !== 'InvalidStateError') {
+              console.warn('Answer handling notice:', err);
+            }
+          } finally {
+            entry.isSettingRemoteAnswer = false;
           }
         })();
         return;
@@ -1830,85 +1866,96 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
-  // Real-time Firebase Cloud Signaling & Presence
-  useEffect(() => {
-    if (!enabled) return;
-
-    setRelayOnline(true);
-
-    const myPeerId = peerIdRef.current;
-    const unsubscribeSignals = subscribeToFirestoreRadioSignals(myPeerId, (msg) => {
-      handleSignalRef.current(msg);
-    });
-
-    const unsubscribePresence = subscribeToRadioCloudPresence((list) => {
-      const now = Date.now();
-      const currentPeerId = peerIdRef.current;
-      const myBaseId = currentPeerId ? currentPeerId.split('#')[0] : '';
-      const validPeers = list.filter(
-        (p) => p && p.peerId && p.peerId !== currentPeerId && (p.peerId.split('#')[0] !== myBaseId) && now - (p.lastSeen || 0) < 18000
-      );
-
-      setPeersMap((prev) => {
-        const next: Record<string, CommPeerInfo[]> = {};
-        // Preserve existing local peers that are still active
-        Object.entries(prev).forEach(([ch, list]) => {
-          next[ch] = list.filter((p) => p.lastSeen && (now - p.lastSeen < 18000 && p.id.split('#')[0] !== myBaseId));
-        });
-
-        validPeers.forEach((p) => {
-          const baseId = p.peerId.split('#')[0];
-          if (baseId) {
-            connectionsRef.current.forEach((conn, key) => {
-              const [cCh, cRemoteId] = key.split('|');
-              if (cRemoteId !== p.peerId && cRemoteId.split('#')[0] === baseId) {
-                try { conn.pc.close(); } catch {}
-                connectionsRef.current.delete(key);
-              }
-            });
-          }
-
-          (p.channels || []).forEach((ch) => {
-            if (!next[ch]) next[ch] = [];
-            // Remove previous instances of this same operator/guest in the channel
-            next[ch] = next[ch].filter((x) => x.id === p.peerId || x.id.split('#')[0] !== baseId);
-            const peerObj: CommPeerInfo = {
-              id: p.peerId,
-              name: p.peerName || (baseId.startsWith('anon') ? 'Operador Convidado' : 'Operador'),
-              role: p.peerRole || (baseId.startsWith('anon') ? 'Convidado' : 'Operativo'),
-              lastSeen: p.lastSeen,
-            };
-            const existingIdx = next[ch].findIndex((x) => x.id === p.peerId);
-            if (existingIdx >= 0) {
-              next[ch][existingIdx] = peerObj;
-            } else {
-              next[ch].push(peerObj);
+  // Atualizador de presença unificado (chamado por SSE e pelo worker)
+  const updatePeersFromList = useCallback((list: any[]) => {
+    const now = Date.now();
+    const currentPeerId = peerIdRef.current;
+    const myBaseId = currentPeerId ? currentPeerId.split('#')[0] : '';
+    const validPeers = list.filter(
+      (p) => p && p.peerId && p.peerId !== currentPeerId && (p.peerId.split('#')[0] !== myBaseId) && now - (p.lastSeen || 0) < 22000
+    );
+    setPeersMap((prev) => {
+      const next: Record<string, CommPeerInfo[]> = {};
+      Object.entries(prev).forEach(([ch, pList]) => {
+        next[ch] = pList.filter((p) => p.lastSeen && (now - p.lastSeen < 22000 && p.id.split('#')[0] !== myBaseId));
+      });
+      validPeers.forEach((p) => {
+        const baseId = p.peerId.split('#')[0];
+        if (baseId) {
+          connectionsRef.current.forEach((conn, key) => {
+            const [, cRemoteId] = key.split('|');
+            if (cRemoteId !== p.peerId && cRemoteId.split('#')[0] === baseId) {
+              try { conn.pc.close(); } catch {}
+              connectionsRef.current.delete(key);
             }
           });
-        });
-
-        // Fast shallow comparison to prevent unnecessary state updates
-        const prevKeys = Object.keys(prev);
-        const nextKeys = Object.keys(next);
-        if (prevKeys.length === nextKeys.length) {
-          const isSame = prevKeys.every((key) => {
-            const pList = prev[key] || [];
-            const nList = next[key] || [];
-            if (pList.length !== nList.length) return false;
-            return pList.every(
-              (p, idx) =>
-                p.id === nList[idx].id &&
-                p.name === nList[idx].name &&
-                p.role === nList[idx].role
-            );
-          });
-          if (isSame) return prev;
         }
-
-        return next;
+        (p.channels || ['geral']).forEach((ch: string) => {
+          if (!next[ch]) next[ch] = [];
+          next[ch] = next[ch].filter((x) => x.id === p.peerId || x.id.split('#')[0] !== baseId);
+          const peerObj: CommPeerInfo = {
+            id: p.peerId,
+            name: p.peerName || (baseId.startsWith('anon') ? 'Operador Convidado' : 'Operador'),
+            role: p.peerRole || (baseId.startsWith('anon') ? 'Convidado' : 'Operativo'),
+            lastSeen: p.lastSeen || now,
+          };
+          const existingIdx = next[ch].findIndex((x) => x.id === p.peerId);
+          if (existingIdx >= 0) {
+            next[ch][existingIdx] = peerObj;
+          } else {
+            next[ch].push(peerObj);
+          }
+        });
       });
+      return next;
     });
+  }, []);
 
+  const updatePeersFromListRef = useRef(updatePeersFromList);
+  updatePeersFromListRef.current = updatePeersFromList;
+
+  // Barramento de Presença e Sinais em Tempo Real (SSE + /api/signal) — 0 COTA DE FIRESTORE
+  useEffect(() => {
+    if (!enabled) return;
+    setRelayOnline(true);
+    const myPeerId = peerIdRef.current;
+    let sse: EventSource | null = null;
+
+    // 1. Conexão SSE para streaming instantâneo (0ms de latência)
+    if (typeof EventSource !== 'undefined') {
+      try {
+        const sseUrl = `/api/signal/stream?peerId=${encodeURIComponent(myPeerId)}`;
+        sse = new EventSource(sseUrl);
+        sse.addEventListener('init', (e: MessageEvent) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data && Array.isArray(data.peers)) {
+              updatePeersFromListRef.current(data.peers);
+            }
+          } catch {}
+        });
+        sse.addEventListener('presence', (e: MessageEvent) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data && Array.isArray(data.peers)) {
+              updatePeersFromListRef.current(data.peers);
+            }
+          } catch {}
+        });
+        sse.addEventListener('signal', (e: MessageEvent) => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg && msg.sender !== peerIdRef.current) {
+              handleSignalRef.current(msg);
+            }
+          } catch {}
+        });
+      } catch (err) {
+        console.warn('[SSE] EventSource indisponível, utilizando polling:', err);
+      }
+    }
+
+    // 2. Heartbeat periódico a cada 8 segundos para registrar presença na memória do servidor
     const sendPresence = () => {
       if (!peerIdRef.current) return;
       updateRadioCloudPresence(
@@ -1920,7 +1967,6 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
     sendPresence();
-    // Heartbeat every 25 seconds (prevents Firestore quota exhaustion)
     const presenceTimer = setInterval(sendPresence, 8000);
 
     const sendByeAndCleanup = () => {
@@ -1954,8 +2000,9 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     window.addEventListener('pagehide', sendByeAndCleanup);
 
     return () => {
-      unsubscribeSignals();
-      unsubscribePresence();
+      if (sse) {
+        sse.close();
+      }
       clearInterval(presenceTimer);
       window.removeEventListener('beforeunload', sendByeAndCleanup);
       window.removeEventListener('pagehide', sendByeAndCleanup);
@@ -1981,6 +2028,9 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       if (data.type === 'polled') {
         const msgs = (data.messages as SignalMessage[]) || [];
         msgs.forEach((m) => handleSignalRef.current(m));
+        if (data.peers && Array.isArray(data.peers)) {
+          updatePeersFromListRef.current(data.peers);
+        }
       } else if (data.type === 'relayOnline') {
         setRelayOnline(Boolean(data.ok));
       } else if (data.type === 'tick') {
@@ -2069,7 +2119,6 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         if (!ch || !remoteId) return;
         const st = entry.pc.connectionState;
         if (st === 'connected') return;
-        if (!(remoteId > peerIdRef.current)) return;
         if (st === 'failed' || st === 'closed') {
           try {
             entry.pc.close();
@@ -2520,9 +2569,58 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [startSpeaking, stopSpeaking]);
 
+  const forceReconnect = useCallback(() => {
+    connectionsRef.current.forEach((conn) => {
+      try { conn.pc.close(); } catch {}
+    });
+    connectionsRef.current.clear();
+    clearAudioEls();
+    acquireMic().catch(() => {});
+    resumeAllAudio();
+    if (peerIdRef.current) {
+      updateRadioCloudPresence(
+        peerIdRef.current,
+        peerNameRef.current,
+        peerRoleRef.current,
+        subscribedRef.current
+      );
+    }
+    showNotice('Canais e conexões de voz reinicializados com sucesso.');
+  }, [acquireMic, clearAudioEls, resumeAllAudio, showNotice]);
+
+  const getDiagnostics = useCallback(() => {
+    const conns: any[] = [];
+    connectionsRef.current.forEach((conn, k) => {
+      conns.push({
+        key: k,
+        remoteId: conn.remoteId,
+        status: conn.status,
+        connectionState: conn.pc.connectionState,
+        iceConnectionState: conn.pc.iceConnectionState,
+        signalingState: conn.pc.signalingState,
+        sendersCount: conn.pc.getSenders().length,
+        hasAudioTrack: conn.pc.getSenders().some((s) => s.track && s.track.kind === 'audio'),
+      });
+    });
+    return {
+      peerId: peerIdRef.current,
+      activeChannel: activeChannelRef.current,
+      micAvailable,
+      micTrackEnabled: micTrackRef.current?.enabled ?? false,
+      micTrackReadyState: micTrackRef.current?.readyState ?? 'none',
+      micLevel,
+      relayOnline,
+      totalPeers: Object.values(peersMapRef.current).reduce((acc, l) => acc + l.length, 0),
+      connections: conns,
+      mediaKeepalive: mediaKeepalive.getDiagnostics(),
+    };
+  }, [micAvailable, micLevel, relayOnline]);
+
   const value: CommContextType = {
     enabled,
     setEnabled,
+    forceReconnect,
+    getDiagnostics,
     volume,
     setVolume,
     sfxEnabled,
@@ -2570,6 +2668,8 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     setAudioOutputDevice,
     toggleLoudspeaker,
     refreshAudioOutputDevices,
+    myAssignedTasks,
+    myCurrentTask,
   };
 
   return <CommContext.Provider value={value}>{children}</CommContext.Provider>;

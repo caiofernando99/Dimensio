@@ -1,24 +1,23 @@
 /**
  * Dimensio Media Keepalive Engine
  *
- * Garante que o aplicativo NÃO seja suspenso em segundo plano no Android / iOS / Chrome / Honeywell.
+ * Garante que a comunicação e o áudio NÃO sejam suspensos em segundo plano no Android / iOS / Chrome / Coletores.
  *
- * Como funciona:
- * 1. Cria um AudioContext ativo com saída contínua via MediaStreamAudioDestinationNode.
- * 2. Injeta uma microportadora de 32Hz com ganho -60dB (completamente inaudível para o ouvido humano
- *    e fisicamente incapaz de ser reproduzida pelo alto-falante do celular, mas com amplitude estritamente
- *    diferente de zero na camada DSP/HAL do Android AudioFlinger).
- * 3. Alimenta um elemento HTML5 <audio playsinline autoplay> via MediaStream ao vivo (sem looping, sem fim).
- * 4. Conecta à MediaSession API do sistema operacional (Android Media Notification / Lockscreen)
- *    com status 'playing', conferindo ao navegador a prioridade de Foreground Media Service no SO.
- * 5. Gerencia automaticamente eventos de visibilidade, bloqueio de tela e retomada de áudio.
+ * Arquitetura para Android:
+ * 1. Utiliza um elemento HTML5 <audio loop playsinline> com um Blob WAV PCM de 55Hz contínuo (-40dB).
+ *    Diferente de AudioContext puro (que o Android suspende ao apagar a tela), elementos <audio>
+ *    com um arquivo de mídia real acionam o MediaPlayer nativo do Android e o Foreground Service de Mídia.
+ * 2. Conecta à MediaSession API do SO (Android Media Notification / Tela de Bloqueio) com status 'playing',
+ *    garantindo que o sistema operacional não mate o processo do navegador quando a tela apagar.
+ * 3. el.play() é disparado de forma estritamente SÍNCRONA no frame de ativação do usuário,
+ *    evitando a rejeição da Autoplay Policy do Android Chrome (NotAllowedError).
+ * 4. Integrado ao signalWorker (Web Worker) que envia keepalive-ping periódico mesmo com throttling do main thread.
  */
 
 type MediaKeepaliveListener = (active: boolean) => void;
 
 class MediaKeepaliveManager {
   private audioCtx: AudioContext | null = null;
-  private destNode: MediaStreamAudioDestinationNode | null = null;
   private oscNode: OscillatorNode | null = null;
   private gainNode: GainNode | null = null;
   private audioEl: HTMLAudioElement | null = null;
@@ -27,24 +26,21 @@ class MediaKeepaliveManager {
   private listeners: Set<MediaKeepaliveListener> = new Set();
   private keepaliveInterval: ReturnType<typeof setInterval> | null = null;
   private fallbackBlobUrl: string | null = null;
+  private currentChannelName: string = 'Geral';
+  private workerPort: { postMessage: (m: unknown) => void } | null = null;
+  private lastPokeMs = 0;
 
   constructor() {
     if (typeof window !== 'undefined') {
+      try {
+        this.fallbackBlobUrl = this.createFallbackCarrierWav();
+      } catch {}
       this.setupAutoUnlock();
     }
   }
 
   /**
    * Monitora gestos do usuário na tela para desbloquear o áudio automaticamente.
-   */
-    private workerPort: { postMessage: (m: unknown) => void } | null = null;
-    private lastPokeMs = 0;
-
-  /**
-   * Permite que o signalWorker (Web Worker, menos sujeito a throttling em
-   * segundo plano) mantenha o pipeline de mídia vivo: a cada tick do worker
-   * o app chama pokeFromWorker(). Sem isso, o setInterval do main thread é
-   * estrangulado para 1/min com a tela desligada e o SO suspende o app.
    */
   public attachWorkerPort(port: { postMessage: (m: unknown) => void } | null) {
     this.workerPort = port;
@@ -55,24 +51,23 @@ class MediaKeepaliveManager {
     this.ensurePlaying();
   }
 
-    private setupAutoUnlock() {
+  private setupAutoUnlock() {
     const unlock = () => {
-      if (this.isRunning && this.audioCtx && this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume().catch(() => {});
+      if (this.isRunning) {
+        this.ensurePlaying();
       }
-      if (this.isRunning && this.audioEl && this.audioEl.paused) {
-        this.audioEl.play().catch(() => {});
+      if (this.audioCtx && this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume().catch(() => {});
       }
     };
 
     window.addEventListener('pointerdown', unlock, { passive: true });
     window.addEventListener('touchstart', unlock, { passive: true });
+    window.addEventListener('click', unlock, { passive: true });
     window.addEventListener('keydown', unlock, { passive: true });
 
     document.addEventListener('visibilitychange', () => {
       if (this.isRunning) {
-        // WakeLock de tela é revogado automaticamente ao ocultar; tenta
-        // recuperar imediatamente ao voltar a ficar visível.
         if (!document.hidden) {
           this.requestScreenWakeLock();
         }
@@ -80,7 +75,6 @@ class MediaKeepaliveManager {
       }
     });
 
-    // iOS/Safari: retoma o contexto ao voltar do background.
     window.addEventListener('pageshow', () => {
       if (this.isRunning) this.ensurePlaying();
     });
@@ -90,13 +84,15 @@ class MediaKeepaliveManager {
   }
 
   /**
-   * Gera um WAV estéreo de 10 segundos com microdither imperceptível
-   * para navegadores que não suportam srcObject em elementos de áudio.
+   * Gera um WAV mono de 8 segundos com onda senoidal pura de 55Hz (-40dB).
+   * 55Hz é inaudível no micro-alto-falante do celular, mas gera amplitude mensurável
+   * no DSP/HAL do Android AudioFlinger, prevenindo o modo de suspensão de bateria.
    */
   private createFallbackCarrierWav(): string {
     try {
-      const sampleRate = 8000;
-      const numSamples = sampleRate * 10;
+      const sampleRate = 16000;
+      const durationSec = 6;
+      const numSamples = sampleRate * durationSec;
       const buffer = new ArrayBuffer(44 + numSamples * 2);
       const view = new DataView(buffer);
 
@@ -109,18 +105,15 @@ class MediaKeepaliveManager {
       view.setUint16(20, 1, true); // PCM
       view.setUint16(22, 1, true); // Mono
       view.setUint32(24, sampleRate, true);
-      view.setUint32(28, sampleRate * 2, true);
-      view.setUint16(32, 2, true);
-      view.setUint16(34, 16, true);
+      view.setUint32(28, sampleRate * 2, true); // byteRate
+      view.setUint16(32, 2, true); // blockAlign
+      view.setUint16(34, 16, true); // 16 bits per sample
       view.setUint32(36, 0x64617461, false); // "data"
       view.setUint32(40, numSamples * 2, true);
 
-      // Injeta tom de 55Hz com amplitude 48/32767 (~-57dB): inaudível na
-      // prática no alto-falante do celular, mas bem acima do limiar de
-      // detecção de silêncio do Android AudioFlinger. Amplitudes menores
-      // (ex: 12) eram classificadas como silêncio e o SO suspendia o app.
+      // Tom de 55Hz com amplitude de 120/32767 (~-48dB).
       for (let i = 0; i < numSamples; i++) {
-        const sample = Math.sin((2 * Math.PI * 55 * i) / sampleRate) * 48;
+        const sample = Math.sin((2 * Math.PI * 55 * i) / sampleRate) * 120;
         view.setInt16(44 + i * 2, Math.round(sample), true);
       }
 
@@ -147,20 +140,19 @@ class MediaKeepaliveManager {
 
     const el = document.createElement('audio');
     el.id = 'dimensio-media-keepalive';
+    (el as any).playsInline = true;
     el.setAttribute('playsinline', 'true');
+    el.setAttribute('webkit-playsinline', 'true');
     el.setAttribute('autoplay', 'true');
     el.setAttribute('loop', 'true');
     el.setAttribute('aria-hidden', 'true');
+    el.loop = true;
+    el.volume = 1.0;
+    el.muted = false;
 
-    // Estilo que mantém presença no DOM para o navegador não considerar elemento morto
-    el.style.position = 'fixed';
-    el.style.bottom = '0';
-    el.style.right = '0';
-    el.style.width = '2px';
-    el.style.height = '2px';
-    el.style.opacity = '0.01';
-    el.style.zIndex = '-9999';
-    el.style.pointerEvents = 'none';
+    // Dimensões visíveis mínimas (10x10px) para que o motor Chromium do Android
+    // não considere o elemento como rastreador oculto de 0px
+    el.style.cssText = 'position:fixed;bottom:2px;right:2px;width:10px;height:10px;opacity:0.02;pointer-events:none;z-index:-1;';
 
     document.body.appendChild(el);
     this.audioEl = el;
@@ -171,6 +163,7 @@ class MediaKeepaliveManager {
    * Configura a MediaSession do sistema operacional (Android Notification / Tela de Bloqueio).
    */
   private setupMediaSession(channelName: string = 'Geral') {
+    this.currentChannelName = channelName;
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) {
       return;
     }
@@ -178,7 +171,7 @@ class MediaKeepaliveManager {
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: `Dimensio Talk — ${channelName}`,
-        artist: 'Modo de Mídia • Operação Ativa em Segundo Plano',
+        artist: 'Modo de Mídia • Ativo em Segundo Plano',
         album: 'Dimensio Workforce Management',
         artwork: [
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
@@ -193,8 +186,8 @@ class MediaKeepaliveManager {
       });
 
       navigator.mediaSession.setActionHandler('pause', () => {
-        // Quando o usuário toca pause na notificação do Android:
-        // Mantemos o stream vivo para não perder o processo no SO, mas podemos silenciar.
+        // No Android, se o usuário tocar em pause na barra de notificação,
+        // garantimos que o áudio continue tocando para não perder o processo
         this.ensurePlaying();
       });
 
@@ -217,93 +210,78 @@ class MediaKeepaliveManager {
         }
       }
     } catch {
-      // Ignora restrições de permissão do WakeLock
+      // Ignora restrições do navegador
     }
   }
 
   /**
    * Inicia o Modo de Mídia Contínuo.
+   * CRÍTICO PARA ANDROID: el.play() é executado imediatamente e de forma síncrona,
+   * sem nenhum await prévio, preservando o token de ativação por toque do usuário.
    */
   public async start(channelName: string = 'Geral'): Promise<boolean> {
     if (typeof window === 'undefined') return false;
-
     this.isRunning = true;
+    this.currentChannelName = channelName;
 
     try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!this.audioCtx && AudioCtx) {
-        this.audioCtx = new AudioCtx({ latencyHint: 'interactive' });
-      }
-
-      if (this.audioCtx && this.audioCtx.state === 'suspended') {
-        await this.audioCtx.resume();
-      }
-
       const el = this.getOrCreateAudioElement();
-
-      // 1. Tenta usar Web Audio MediaStreamDestination (live stream sem fim)
-      if (this.audioCtx && typeof this.audioCtx.createMediaStreamDestination === 'function') {
-        if (!this.destNode) {
-          this.destNode = this.audioCtx.createMediaStreamDestination();
-
-          // CORREÇÃO CRÍTICA: 55Hz com ganho 0.02 (~-34dB no grafo) +
-          // el.volume = 1.0. Antes usávamos 32Hz @ -54dB com volume 0.05,
-          // o que o AudioFlinger classificava como silêncio digital e
-          // liberava o app para suspensão em ~30-60s de tela desligada.
-          // 55Hz está abaixo da resposta útil do micro-alto-falante (portanto
-          // inaudível), mas gera energia mensurável no HAL/DSP.
-          const osc = this.audioCtx.createOscillator();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(55, this.audioCtx.currentTime);
-
-          const gain = this.audioCtx.createGain();
-          gain.gain.setValueAtTime(0.02, this.audioCtx.currentTime);
-
-          osc.connect(gain);
-          gain.connect(this.destNode);
-          osc.start();
-
-          this.oscNode = osc;
-          this.gainNode = gain;
-        }
-
-        if (this.destNode.stream) {
-          try {
-            el.srcObject = this.destNode.stream;
-          } catch {
-            // fallback para src se srcObject falhar
-          }
-        }
+      if (!this.fallbackBlobUrl) {
+        this.fallbackBlobUrl = this.createFallbackCarrierWav();
       }
 
-      // 2. Se srcObject não foi atribuído ou falhou, usa o WAV carrier blob
-      if (!el.srcObject && !el.src) {
-        if (!this.fallbackBlobUrl) {
-          this.fallbackBlobUrl = this.createFallbackCarrierWav();
-        }
+      if (!el.src || el.src !== this.fallbackBlobUrl) {
         el.src = this.fallbackBlobUrl;
       }
 
-      // NUNCA usar volume baixo aqui: o Android marca streams com
-      // volume < ~0.2 como "silent" e remove a prioridade de foreground.
-      // O silêncio percebido vem do ganho baixo dentro do grafo, não do volume.
+      el.loop = true;
       el.volume = 1.0;
       el.muted = false;
-      // @ts-ignore - preserva pitch em alguns WebViews Honeywell/Zebra
-      if ('preservesPitch' in el) (el as any).preservesPitch = false;
+      (el as any).playsInline = true;
+      el.setAttribute('playsinline', 'true');
+      el.setAttribute('webkit-playsinline', 'true');
 
-      await el.play();
+      // DISPARO SÍNCRONO NO FRAME DO TOQUE DO USUÁRIO
+      const playPromise = el.play();
 
+      // Configura MediaSession e WakeLock paralelamente
       this.setupMediaSession(channelName);
       this.requestScreenWakeLock();
 
-      // Inicia verificação periódica de saúde da mídia. 10s em vez de 3s:
-      // o intervalo do main thread é estrangulado em background; o heartbeat
-      // real em 2º plano vem do signalWorker via pokeFromWorker().
+      // Inicializa WebAudio em paralelo com oscilador inaudível mantendo o áudio HAL ativo
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!this.audioCtx && AudioCtx) {
+          this.audioCtx = new AudioCtx({ latencyHint: 'interactive' });
+        }
+        if (this.audioCtx) {
+          if (this.audioCtx.state === 'suspended') {
+            this.audioCtx.resume().catch(() => {});
+          }
+          if (!this.oscNode) {
+            const osc = this.audioCtx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(55, this.audioCtx.currentTime);
+            const gain = this.audioCtx.createGain();
+            gain.gain.setValueAtTime(0.001, this.audioCtx.currentTime);
+            osc.connect(gain);
+            gain.connect(this.audioCtx.destination);
+            osc.start();
+            this.oscNode = osc;
+            this.gainNode = gain;
+          }
+        }
+      } catch {}
+
+      // Intervalo de verificação de integridade da mídia
       if (!this.keepaliveInterval) {
         this.keepaliveInterval = setInterval(() => {
           this.ensurePlaying();
-        }, 10000);
+        }, 8000);
+      }
+
+      if (playPromise !== undefined) {
+        await playPromise;
       }
 
       this.notifyListeners(true);
@@ -319,41 +297,38 @@ class MediaKeepaliveManager {
    * Garante que o stream de áudio esteja rodando.
    */
   public ensurePlaying() {
-    if (!this.isRunning) {
-      this.start().catch(() => {});
-      return;
+    if (!this.isRunning) return;
+
+    const el = this.audioEl || this.getOrCreateAudioElement();
+    if (el && (el.paused || el.ended)) {
+      if (!el.src && this.fallbackBlobUrl) {
+        el.src = this.fallbackBlobUrl;
+      }
+      el.volume = 1.0;
+      el.muted = false;
+      el.play().then(() => {
+        this.notifyListeners(true);
+      }).catch(() => {});
     }
 
-    if (this.audioCtx && this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume().catch(() => {});
-    }
-
-    // Se o oscilador morreu (GC do contexto), recria sob demanda.
-    if (this.isRunning && this.audioCtx && !this.oscNode) {
-      try {
-        this.destNode = this.audioCtx.createMediaStreamDestination();
-        const osc = this.audioCtx.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(55, this.audioCtx.currentTime);
-        const gain = this.audioCtx.createGain();
-        gain.gain.setValueAtTime(0.02, this.audioCtx.currentTime);
-        osc.connect(gain);
-        gain.connect(this.destNode);
-        osc.start();
-        this.oscNode = osc;
-        this.gainNode = gain;
-        if (this.audioEl && this.destNode.stream) {
-          try {
-            this.audioEl.srcObject = this.destNode.stream;
-          } catch {}
-        }
-      } catch {}
-    }
-
-    if (this.audioEl && (this.audioEl.paused || this.audioEl.ended)) {
-      this.audioEl.volume = 1.0;
-      this.audioEl.muted = false;
-      this.audioEl.play().catch(() => {});
+    if (this.audioCtx) {
+      if (this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume().catch(() => {});
+      }
+      if (!this.oscNode) {
+        try {
+          const osc = this.audioCtx.createOscillator();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(55, this.audioCtx.currentTime);
+          const gain = this.audioCtx.createGain();
+          gain.gain.setValueAtTime(0.001, this.audioCtx.currentTime);
+          osc.connect(gain);
+          gain.connect(this.audioCtx.destination);
+          osc.start();
+          this.oscNode = osc;
+          this.gainNode = gain;
+        } catch {}
+      }
     }
 
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
@@ -371,7 +346,7 @@ class MediaKeepaliveManager {
       ctxState: this.audioCtx ? this.audioCtx.state : 'none',
       elPaused: this.audioEl ? this.audioEl.paused : null,
       elVolume: this.audioEl ? this.audioEl.volume : null,
-      hasStream: Boolean(this.destNode?.stream),
+      channel: this.currentChannelName,
       lastWorkerPokeMs: this.lastPokeMs,
     };
   }
@@ -390,16 +365,9 @@ class MediaKeepaliveManager {
     if (this.audioEl) {
       try {
         this.audioEl.pause();
-        this.audioEl.srcObject = null;
         this.audioEl.removeAttribute('src');
         this.audioEl.load();
       } catch {}
-    }
-    if (this.fallbackBlobUrl) {
-      try {
-        URL.revokeObjectURL(this.fallbackBlobUrl);
-      } catch {}
-      this.fallbackBlobUrl = null;
     }
 
     if (this.oscNode) {
@@ -410,11 +378,17 @@ class MediaKeepaliveManager {
       this.oscNode = null;
     }
 
-    if (this.destNode) {
+    if (this.gainNode) {
       try {
-        this.destNode.disconnect();
+        this.gainNode.disconnect();
       } catch {}
-      this.destNode = null;
+      this.gainNode = null;
+    }
+
+    if (this.audioCtx) {
+      try {
+        this.audioCtx.suspend().catch(() => {});
+      } catch {}
     }
 
     if (this.wakeLock) {
@@ -455,13 +429,11 @@ class MediaKeepaliveManager {
         if (ctx.state === 'suspended') {
           ctx.resume().catch(() => {});
         }
-
         const now = ctx.currentTime;
         const notes = [
           { freq: 523.25, time: 0, dur: 0.15 }, // C5
           { freq: 659.25, time: 0.12, dur: 0.25 }, // E5
         ];
-
         notes.forEach(({ freq, time, dur }) => {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
@@ -474,7 +446,6 @@ class MediaKeepaliveManager {
           osc.start(now + time);
           osc.stop(now + time + dur);
         });
-
         setTimeout(resolve, 400);
       } catch {
         resolve();

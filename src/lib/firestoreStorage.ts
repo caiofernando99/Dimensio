@@ -91,6 +91,14 @@ export function markFirestoreQuotaExceeded(cooldownMs = 30 * 60 * 1000): void {
   }
 }
 
+export function clearFirestoreQuotaExceeded(): void {
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(QUOTA_STORAGE_KEY);
+    }
+  } catch {}
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
   const currentUser = auth.currentUser;
   const isQuota = isQuotaExceededError(error);
@@ -467,106 +475,40 @@ export interface RadioCloudPresence {
  * Pushes WebRTC / PTT signaling messages directly to Firestore in real-time.
  * Filtra candidatos ICE para não consumir cota do Firestore.
  */
-export async function sendFirestoreRadioSignals(messages: SignalMessage[]): Promise<void> {
-  if (!messages || messages.length === 0 || isFirestoreQuotaExceeded()) return;
-  // Permitir sinais essenciais e candidatos ICE direcionados para viabilizar WebRTC entre dispositivos
-  const essentialSignals = messages.filter(
-    (m) =>
-      m.kind !== 'speaking' &&
-      m.kind !== 'audio_chunk' &&
-      m.kind !== 'state_ping' &&
-      (m.kind !== 'candidate' || Boolean(m.to))
-  );
-  if (essentialSignals.length === 0) return;
+/**
+ * Zero-cost WebRTC Signaling & Radio Presence Bus
+ *
+ * ARQUITETURA DE COTA ZERO:
+ * O rádio PTT e troca de sinais WebRTC (candidatos ICE, SDP, heartbeats a cada 8s)
+ * NUNCA devem ser gravados no Firestore para não esgotar a cota diária gratuita (50k leituras/dia).
+ * Em vez disso, essas operações utilizam o endpoint local ultrarrápido /api/signal e /api/signal/presence
+ * do próprio servidor Express da aplicação (0 ms de delay e 0 custo de Firestore).
+ */
 
+export async function sendFirestoreRadioSignals(messages: SignalMessage[]): Promise<void> {
+  if (!messages || messages.length === 0) return;
   try {
-    const promises = essentialSignals.map((msg) => {
-      const docRef = doc(db, RADIO_SIGNALS_COLLECTION, msg.mid);
-      const cleanPayload: Record<string, any> = {
-        mid: msg.mid,
-        kind: msg.kind,
-        sender: msg.sender,
-        senderName: msg.senderName || '',
-        senderRole: msg.senderRole || '',
-        to: msg.to || null,
-        channel: msg.channel || 'geral',
-        ts: msg.ts || Date.now(),
-        directOpen: Boolean(msg.directOpen),
-      };
-      if (msg.payload !== undefined) {
-        cleanPayload.payload = JSON.stringify(msg.payload);
-      }
-      return setDoc(docRef, cleanPayload);
+    await fetch('/api/signal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signal: messages }),
     });
-    await Promise.all(promises);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      markFirestoreQuotaExceeded();
-    }
-  }
+  } catch {}
 }
 
 /**
- * Subscribes to real-time incoming WebRTC / PTT signals via Firestore onSnapshot.
+ * Subscribes to real-time incoming WebRTC / PTT signals.
+ * O streaming é provido por SSE (/api/signal/stream) e polling no CommunicationContext.
  */
 export function subscribeToFirestoreRadioSignals(
-  myPeerId: string,
-  onSignal: (msg: SignalMessage) => void
+  _myPeerId: string,
+  _onSignal: (msg: SignalMessage) => void
 ): Unsubscribe {
-  if (isFirestoreQuotaExceeded()) {
-    return () => {};
-  }
-  const colRef = collection(db, RADIO_SIGNALS_COLLECTION);
-  const q = query(colRef, orderBy('ts', 'desc'), limit(60));
-
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const now = Date.now();
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added' || change.type === 'modified') {
-          const d = change.doc.data();
-          if (!d || d.sender === myPeerId) return;
-          // Ignore signals older than 30s
-          if (d.ts && now - d.ts > 30000) return;
-          if (d.to && d.to !== myPeerId) return;
-
-          let parsedPayload = undefined;
-          if (d.payload) {
-            try {
-              parsedPayload = JSON.parse(d.payload);
-            } catch {
-              parsedPayload = d.payload;
-            }
-          }
-
-          const msg: SignalMessage = {
-            mid: d.mid || change.doc.id,
-            kind: d.kind,
-            sender: d.sender,
-            senderName: d.senderName,
-            senderRole: d.senderRole,
-            to: d.to || undefined,
-            channel: d.channel,
-            ts: d.ts || now,
-            payload: parsedPayload,
-            directOpen: Boolean(d.directOpen),
-          };
-
-          onSignal(msg);
-        }
-      });
-    },
-    (err) => {
-      if (isQuotaExceededError(err)) {
-        markFirestoreQuotaExceeded();
-      }
-    }
-  );
+  return () => {};
 }
 
 /**
- * Updates peer heartbeat in Firestore for Radio PTT Presence.
+ * Updates peer heartbeat in in-memory server presence store (0 Firestore reads/writes).
  */
 export async function updateRadioCloudPresence(
   peerId: string,
@@ -574,76 +516,38 @@ export async function updateRadioCloudPresence(
   peerRole: string,
   channels: string[]
 ): Promise<void> {
-  if (!peerId || isFirestoreQuotaExceeded()) return;
+  if (!peerId) return;
   try {
-    const docId = peerId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const docRef = doc(db, RADIO_PRESENCE_COLLECTION, docId);
-    await setDoc(
-      docRef,
-      {
-        peerId,
-        peerName,
-        peerRole,
-        channels,
-        lastSeen: Date.now(),
-      },
-      { merge: true }
-    );
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      markFirestoreQuotaExceeded();
-    }
-  }
-}
-
-/**
- * Removes peer presence from Firestore when radio turns off.
- */
-export async function removeRadioCloudPresence(peerId: string): Promise<void> {
-  if (!peerId || isFirestoreQuotaExceeded()) return;
-  try {
-    const docId = peerId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const docRef = doc(db, RADIO_PRESENCE_COLLECTION, docId);
-    await deleteDoc(docRef);
+    await fetch('/api/signal/presence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ peerId, peerName, peerRole, channels }),
+    });
   } catch {}
 }
 
 /**
- * Subscribes to real-time Radio Presence across all subscribed channels.
+ * Removes peer presence when radio turns off.
+ */
+export async function removeRadioCloudPresence(peerId: string): Promise<void> {
+  if (!peerId) return;
+  try {
+    await fetch('/api/signal/presence', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ peerId }),
+    });
+  } catch {}
+}
+
+/**
+ * Subscribes to real-time Radio Presence.
+ * Fornecido em tempo real via SSE e polling do servidor.
  */
 export function subscribeToRadioCloudPresence(
-  onUpdate: (peersList: RadioCloudPresence[]) => void
+  _onUpdate: (peersList: RadioCloudPresence[]) => void
 ): Unsubscribe {
-  if (isFirestoreQuotaExceeded()) {
-    return () => {};
-  }
-  const colRef = collection(db, RADIO_PRESENCE_COLLECTION);
-  return onSnapshot(
-    colRef,
-    (snapshot) => {
-      const now = Date.now();
-      const list: RadioCloudPresence[] = [];
-      snapshot.forEach((d) => {
-        const p = d.data() as RadioCloudPresence;
-        // Presença ativa se visto nos últimos 18 segundos (evita colaboradores fantasmas)
-        const age = now - (p?.lastSeen || 0);
-        if (p && p.peerId && age < 18000) {
-          list.push(p);
-        } else if (p && p.peerId && age > 30000) {
-          // Limpeza proativa de fantasmas obsoletos no Firestore
-          try {
-            deleteDoc(doc(db, RADIO_PRESENCE_COLLECTION, d.id)).catch(() => {});
-          } catch {}
-        }
-      });
-      onUpdate(list);
-    },
-    (err) => {
-      if (isQuotaExceededError(err)) {
-        markFirestoreQuotaExceeded();
-      }
-    }
-  );
+  return () => {};
 }
 
 const USER_PROFILES_COLLECTION = 'dimensio_user_profiles';

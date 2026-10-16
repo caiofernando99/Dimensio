@@ -87,8 +87,8 @@ async function postBatch(messages: SignalMessage[]): Promise<boolean> {
 let lastPollTs = 0;
 let lastSeq = 0;
 
-async function tryPoll(targetUrl: string): Promise<{ messages: SignalMessage[]; ok: boolean }> {
-  if (!cfg) return { messages: [], ok: false };
+async function tryPoll(targetUrl: string): Promise<{ messages: SignalMessage[]; peers: any[]; ok: boolean }> {
+  if (!cfg) return { messages: [], peers: [], ok: false };
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
@@ -117,7 +117,7 @@ async function tryPoll(targetUrl: string): Promise<{ messages: SignalMessage[]; 
 
     const res = await fetch(u.toString(), { method: 'GET', signal: controller.signal });
     clearTimeout(timeout);
-    if (!res.ok) return { messages: [], ok: false };
+    if (!res.ok) return { messages: [], peers: [], ok: false };
 
     const data = await res.json();
     lastPollTs = Math.max(0, Date.now() - 1500);
@@ -136,14 +136,15 @@ async function tryPoll(targetUrl: string): Promise<{ messages: SignalMessage[]; 
       }
     }
 
-    return { messages, ok: true };
+    const peers = (data && Array.isArray(data.peers)) ? data.peers : [];
+    return { messages, peers, ok: true };
   } catch {
-    return { messages: [], ok: false };
+    return { messages: [], peers: [], ok: false };
   }
 }
 
-async function poll(): Promise<{ messages: SignalMessage[]; ok: boolean }> {
-  if (!cfg) return { messages: [], ok: false };
+async function poll(): Promise<{ messages: SignalMessage[]; peers: any[]; ok: boolean }> {
+  if (!cfg) return { messages: [], peers: [], ok: false };
   // Always query /api/signal first for zero-latency WebRTC P2P handshake
   let result = await tryPoll('/api/signal');
   if ((!result.ok || result.messages.length === 0) && cfg.webhookUrl && cfg.webhookUrl !== '/api/signal' && !cfg.webhookUrl.endsWith('/api/signal')) {
@@ -153,6 +154,26 @@ async function poll(): Promise<{ messages: SignalMessage[]; ok: boolean }> {
     }
   }
   return result;
+}
+
+async function sendWorkerPresence() {
+  if (!cfg || !cfg.peerId) return;
+  try {
+    const resolvedUrl =
+      typeof self !== 'undefined' && self.location
+        ? new URL('/api/signal/presence', self.location.origin).toString()
+        : '/api/signal/presence';
+    await fetch(resolvedUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        peerId: cfg.peerId,
+        peerName: cfg.peerName,
+        peerRole: cfg.peerRole,
+        channels: cfg.channels,
+      }),
+    });
+  } catch {}
 }
 
 function buildPresence() {
@@ -178,6 +199,7 @@ async function tick() {
   if (now - lastHeartbeat >= cfg.heartbeatMs) {
     lastHeartbeat = now;
     buildPresence();
+    void sendWorkerPresence();
   }
 
   let postOk = true;
@@ -189,10 +211,10 @@ async function tick() {
   let pollOk = true;
   if (now - lastPoll >= cfg.pollMs - 300) {
     lastPoll = now;
-    const { messages, ok } = await poll();
+    const { messages, peers, ok } = await poll();
     pollOk = ok;
-    if (messages.length > 0) {
-      workerSelf.postMessage({ type: 'polled', messages });
+    if (messages.length > 0 || (peers && peers.length > 0)) {
+      workerSelf.postMessage({ type: 'polled', messages, peers });
     }
   }
 

@@ -66,6 +66,9 @@ export default defineConfig(() => {
             },
           ],
         },
+        devOptions: {
+          enabled: false,
+        },
         workbox: {
           globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
@@ -94,8 +97,21 @@ export default defineConfig(() => {
         },
       }),
     ],
+    optimizeDeps: {
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
+        'lucide-react',
+        'recharts',
+        'xlsx',
+        'html-to-image',
+      ],
+    },
     resolve: {
-      dedupe: ['react', 'react-dom'],
+      dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
       alias: {
         '@': path.resolve(__dirname, '.'),
       },

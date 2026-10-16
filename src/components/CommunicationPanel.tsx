@@ -25,7 +25,9 @@ import {
   PhoneCall,
   PhoneOff,
   Send,
+  Activity,
 } from 'lucide-react';
+import { RadioDiagnosticsModal } from './RadioDiagnosticsModal';
 
 const FLOATING_POS_KEY = 'dimensio_ptt_floating_pos_v1';
 
@@ -95,6 +97,8 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
     isLoudspeaker,
     setAudioOutputDevice,
     toggleLoudspeaker,
+    myAssignedTasks,
+    myCurrentTask,
   } = useCommunication();
   const { state, showNotice, identifiedUser } = useApp();
 
@@ -106,6 +110,7 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
   }, [state.collaborators, onlineCollabIds]);
 
   const [showCollabPicker, setShowCollabPicker] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   if (state.showRadioModule === false) return null;
 
@@ -363,6 +368,48 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
   const renderActiveChannelIndicator = () => {
     return (
       <div className="space-y-1.5">
+        {/* Alternador Rápido: Geral vs Minha Tarefa */}
+        {myCurrentTask && (
+          <div className="flex items-center gap-1.5 p-1 bg-[var(--surface-2)] border border-[var(--line)] rounded-xl">
+            <button
+              type="button"
+              onClick={() => setActiveChannel('geral')}
+              className={`flex-1 py-1.5 px-2.5 rounded-lg text-[10.5px] font-black flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                activeChannel === 'geral'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-[var(--muted)] hover:text-[var(--ink)]'
+              }`}
+              title="Falar para toda a base / Geral"
+            >
+              <Radio className="w-3.5 h-3.5 shrink-0" />
+              <span>Geral (Todos)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveChannel(`task:${myCurrentTask.id}`)}
+              className={`flex-1 py-1.5 px-2.5 rounded-lg text-[10.5px] font-black flex items-center justify-center gap-1.5 cursor-pointer transition-all truncate ${
+                activeChannel === `task:${myCurrentTask.id}`
+                  ? 'bg-[var(--primary)] text-white shadow-xs'
+                  : 'text-[var(--muted)] hover:text-[var(--ink)]'
+              }`}
+              title={`Falar apenas com a equipe da tarefa "${myCurrentTask.name}"`}
+            >
+              <Users className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Tarefa: {myCurrentTask.name}</span>
+            </button>
+          </div>
+        )}
+
+        {/* Dica operacional ao falar na tarefa */}
+        {myCurrentTask && activeChannel === `task:${myCurrentTask.id}` && (
+          <div className="px-2.5 py-1 bg-sky-500/10 border border-sky-500/30 rounded-lg text-[10px] text-sky-800 dark:text-sky-300 font-bold flex items-center gap-1.5">
+            <span className="shrink-0">🎯</span>
+            <span className="leading-tight">
+              Canal exclusivo da tarefa ativo — Sua voz só é ouvida pelos colegas da sua tarefa. O canal Geral fica 100% livre!
+            </span>
+          </div>
+        )}
+
         {remoteTransmitting && (
           <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-rose-500/40 bg-rose-500/15 text-rose-700 dark:text-rose-300 text-xs font-black uppercase tracking-wide animate-pulse shadow-sm">
             <span className="flex items-center gap-2 truncate">
@@ -474,6 +521,15 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowDiagnostics(true)}
+              className="px-2.5 py-1.5 rounded-xl border border-[var(--line)] bg-[var(--paper)] hover:bg-[var(--line)] text-[var(--ink)] text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+              title="Abrir diagnóstico de áudio e conexões WebRTC"
+            >
+              <Activity className="w-3.5 h-3.5 text-indigo-500" />
+              <span className="hidden sm:inline">Diagnóstico</span>
+            </button>
             <div className="relative">
               <button
                 type="button"
@@ -1611,6 +1667,7 @@ export const CommunicationPanel: React.FC<CommunicationPanelProps> = ({ isFloati
           </div>
         </div>
       )}
+      <RadioDiagnosticsModal isOpen={showDiagnostics} onClose={() => setShowDiagnostics(false)} />
     </div>
   );
 };

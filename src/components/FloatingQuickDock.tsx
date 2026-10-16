@@ -73,6 +73,7 @@ export const FloatingQuickDock: React.FC = () => {
     setPttKey,
     activeChannel,
     setActiveChannel,
+    myCurrentTask,
     channels,
     subscribedChannels,
     toggleChannel,
@@ -369,6 +370,37 @@ export const FloatingQuickDock: React.FC = () => {
                 {/* TAB 1: CONTROLS & TRANSMISSION */}
                 {radioTab === 'controls' && (
                   <div className="space-y-3">
+                    {/* Quick Switch: Geral vs Minha Tarefa */}
+                    {myCurrentTask && (
+                      <div className="flex items-center gap-1.5 p-1 bg-[var(--surface-2)] border border-[var(--line)] rounded-xl">
+                        <button
+                          type="button"
+                          onClick={() => setActiveChannel('geral')}
+                          className={`flex-1 py-1 px-2 rounded-lg text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                            activeChannel === 'geral'
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'text-[var(--muted)] hover:text-[var(--ink)]'
+                          }`}
+                        >
+                          <Radio className="w-3 h-3 shrink-0" />
+                          <span>Geral</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveChannel(`task:${myCurrentTask.id}`)}
+                          className={`flex-1 py-1 px-2 rounded-lg text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer transition-all truncate ${
+                            activeChannel === `task:${myCurrentTask.id}`
+                              ? 'bg-[var(--primary)] text-white shadow-xs'
+                              : 'text-[var(--muted)] hover:text-[var(--ink)]'
+                          }`}
+                          title={`Falar na tarefa: ${myCurrentTask.name}`}
+                        >
+                          <Users className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{myCurrentTask.name}</span>
+                        </button>
+                      </div>
+                    )}
+
                     {/* Active Channel Selector Bar */}
                     <div className="flex items-center gap-2 bg-[var(--bg)] border border-[var(--line)] px-2.5 py-1.5 rounded-xl">
                       <Users className="w-3.5 h-3.5 text-[var(--primary)] shrink-0" />

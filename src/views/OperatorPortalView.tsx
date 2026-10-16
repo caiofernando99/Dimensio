@@ -103,6 +103,7 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
     audioBlocked,
     resumeAllAudio,
     relayOnline,
+    joinTaskChannel,
   } = useCommunication();
 
   // Read URL query parameters for default filters
@@ -986,10 +987,25 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Badge tone="success" dot className="font-extrabold text-xs py-1 px-3 uppercase">
                       Alocado Hoje
                     </Badge>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      icon={Radio}
+                      onClick={() => {
+                        setActiveTab('comunicacao');
+                        if (myDirectTasks.length > 0) {
+                          joinTaskChannel(myDirectTasks[0].id);
+                        }
+                      }}
+                      className="font-black text-xs py-1 px-3 shadow-xs"
+                      title="Entrar no canal exclusivo desta tarefa para falar com sua equipe"
+                    >
+                      Canal da Tarefa
+                    </Button>
                   </div>
                 </div>
               </div>

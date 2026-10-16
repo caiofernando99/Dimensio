@@ -185,6 +185,25 @@ export const signalStore: SignalMessage[] = [];
 export const MAX_SIGNALS = 1000;
 export let globalSignalSeq = 0;
 
+export interface RadioPresenceInfo {
+  peerId: string;
+  peerName: string;
+  peerRole: string;
+  channels: string[];
+  lastSeen: number;
+}
+
+export const radioPresenceStore = new Map<string, RadioPresenceInfo>();
+export const signalSseClients = new Set<(event: string, data: any) => void>();
+
+export function broadcastSignalSse(event: string, data: any) {
+  signalSseClients.forEach((send) => {
+    try {
+      send(event, data);
+    } catch {}
+  });
+}
+
 export const dimensioStore: DimensioStoreState = {
   collaborators: [],
   tasks: [],
@@ -319,9 +338,20 @@ export function checkSignalRate(req: Request): boolean {
 
 // Clean up stale signals
 export function cleanupSignals() {
-  const cutoff = Date.now() - 5 * 60 * 1000;
+  const now = Date.now();
+  const cutoff = now - 5 * 60 * 1000;
   while (signalStore.length > 0 && signalStore[0].ts < cutoff) {
     signalStore.shift();
+  }
+  let presenceChanged = false;
+  radioPresenceStore.forEach((info, peerId) => {
+    if (now - info.lastSeen > 55000) {
+      radioPresenceStore.delete(peerId);
+      presenceChanged = true;
+    }
+  });
+  if (presenceChanged) {
+    broadcastSignalSse('presence', { peers: Array.from(radioPresenceStore.values()) });
   }
 }
 
@@ -1699,8 +1729,86 @@ unifiedApiRouter.post(['/sync', '/dimensio/sync'], (req: Request, res: Response)
 });
 
 /**
- * 12. WEBRTC / PTT SIGNAL BUS
+ * 12. WEBRTC / PTT SIGNAL BUS & REAL-TIME PRESENCE (Zero-cost, Zero-Firestore, In-Memory)
  */
+unifiedApiRouter.get('/signal/stream', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.flushHeaders?.();
+
+  const peerId = (req.query.peerId as string) || '';
+  if (peerId && radioPresenceStore.has(peerId)) {
+    const p = radioPresenceStore.get(peerId)!;
+    p.lastSeen = Date.now();
+  }
+
+  const send = (event: string, data: any) => {
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch {}
+  };
+
+  signalSseClients.add(send);
+
+  // Send initial presence and maxSeq
+  send('init', {
+    peers: Array.from(radioPresenceStore.values()),
+    maxSeq: globalSignalSeq,
+  });
+
+  const pingInterval = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      clearInterval(pingInterval);
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(pingInterval);
+    signalSseClients.delete(send);
+  });
+});
+
+unifiedApiRouter.get('/signal/presence', (_req: Request, res: Response) => {
+  cleanupSignals();
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({ peers: Array.from(radioPresenceStore.values()) });
+});
+
+unifiedApiRouter.post('/signal/presence', (req: Request, res: Response) => {
+  try {
+    const { peerId, peerName, peerRole, channels } = req.body || {};
+    if (!peerId) {
+      return sendError(res, 'peerId é obrigatório', 400);
+    }
+    const now = Date.now();
+    radioPresenceStore.set(peerId, {
+      peerId,
+      peerName: peerName || 'Operador',
+      peerRole: peerRole || 'Operativo',
+      channels: Array.isArray(channels) ? channels : ['geral'],
+      lastSeen: now,
+    });
+    broadcastSignalSse('presence', { peers: Array.from(radioPresenceStore.values()) });
+    return sendSuccess(res, { peers: Array.from(radioPresenceStore.values()) });
+  } catch (err: any) {
+    return sendError(res, 'Erro ao registrar presença', 500, err?.message);
+  }
+});
+
+unifiedApiRouter.delete('/signal/presence', (req: Request, res: Response) => {
+  const peerId = (req.query.peerId as string) || (req.body?.peerId as string) || '';
+  if (peerId) {
+    radioPresenceStore.delete(peerId);
+    broadcastSignalSse('presence', { peers: Array.from(radioPresenceStore.values()) });
+  }
+  return sendSuccess(res, { ok: true });
+});
+
 unifiedApiRouter.get('/signal', (req: Request, res: Response) => {
   if (!checkSignalRate(req)) {
     res.setHeader('Retry-After', '1');
@@ -1708,10 +1816,14 @@ unifiedApiRouter.get('/signal', (req: Request, res: Response) => {
     return res.status(429).json({ error: 'Polling muito frequente. Use intervalo >= 2.5s.', maxSeq: globalSignalSeq, messages: [] });
   }
   cleanupSignals();
+  const peerId = (req.query.peerId as string) || '';
+  if (peerId && radioPresenceStore.has(peerId)) {
+    const p = radioPresenceStore.get(peerId)!;
+    p.lastSeen = Date.now();
+  }
   const sinceSeq = parseInt((req.query.sinceSeq as string) || '0', 10);
   const sinceTs = parseInt((req.query.since as string) || '0', 10);
   const now = Date.now();
-
   let newMsgs: SignalMessage[];
   if (sinceSeq > 0) {
     newMsgs = signalStore.filter((m) => (m.seq || 0) > sinceSeq);
@@ -1721,13 +1833,12 @@ unifiedApiRouter.get('/signal', (req: Request, res: Response) => {
   } else {
     newMsgs = signalStore.filter((m) => m.ts >= now - 30000);
   }
-
   if (newMsgs.length > 100) newMsgs = newMsgs.slice(-100);
   const maxSeq = signalStore.length > 0 ? (signalStore[signalStore.length - 1].seq || globalSignalSeq) : globalSignalSeq;
-
   res.setHeader('Cache-Control', 'no-store');
   return res.json({
     messages: newMsgs,
+    peers: Array.from(radioPresenceStore.values()),
     maxSeq,
     count: newMsgs.length,
     seq: globalSignalSeq,
@@ -1744,7 +1855,6 @@ unifiedApiRouter.post('/signal', (req: Request, res: Response) => {
         return sendError(res, 'JSON inválido');
       }
     }
-
     let msgs: SignalMessage[] = [];
     if (Array.isArray(body)) {
       msgs = body;
@@ -1755,25 +1865,48 @@ unifiedApiRouter.post('/signal', (req: Request, res: Response) => {
     } else if (body && typeof body === 'object' && (body.mid || body.kind || body.sender)) {
       msgs = [body];
     }
-
     const now = Date.now();
+    let presenceChanged = false;
+
     msgs.forEach((m) => {
       if (m && (m.sender || m.kind)) {
         globalSignalSeq++;
-        signalStore.push({
+        const savedMsg: SignalMessage = {
           ...m,
           mid: m.mid || `sig-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
           sender: m.sender || 'unknown',
           ts: m.ts || now,
           seq: globalSignalSeq,
-        });
+        };
+        signalStore.push(savedMsg);
+
+        // Update presence on presence or bye signals
+        if (m.kind === 'presence' || m.kind === 'state_ping') {
+          radioPresenceStore.set(m.sender, {
+            peerId: m.sender,
+            peerName: m.senderName || 'Operador',
+            peerRole: m.senderRole || 'Operativo',
+            channels: Array.isArray(m.payload?.channels) ? m.payload.channels : ['geral'],
+            lastSeen: now,
+          });
+          presenceChanged = true;
+        } else if (m.kind === 'bye') {
+          radioPresenceStore.delete(m.sender);
+          presenceChanged = true;
+        }
+
+        // Real-time zero-latency broadcast to active SSE connections!
+        broadcastSignalSse('signal', savedMsg);
       }
     });
+
+    if (presenceChanged) {
+      broadcastSignalSse('presence', { peers: Array.from(radioPresenceStore.values()) });
+    }
 
     if (signalStore.length > MAX_SIGNALS) {
       signalStore.splice(0, signalStore.length - MAX_SIGNALS);
     }
-
     return sendSuccess(res, { count: msgs.length, maxSeq: globalSignalSeq });
   } catch (err: any) {
     return sendError(res, 'Payload de sinal inválido', 400, err?.message);

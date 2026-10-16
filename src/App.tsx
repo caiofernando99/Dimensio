@@ -20,8 +20,7 @@ import LoginScreen from './components/LoginScreen';
 import AlwaysOnlineOverlay from './components/AlwaysOnlineOverlay';
 import { onNavigateRequested } from './utils/navigation';
 import { decodeConnectionParams } from './utils/urlConnection';
-
-const HomeView = lazy(() => import('./views/HomeView').then((m) => ({ default: m.HomeView })));
+import { HomeView } from './views/HomeView';
 const CalendarView = lazy(() => import('./views/CalendarView').then((m) => ({ default: m.CalendarView })));
 const TeamView = lazy(() => import('./views/TeamView').then((m) => ({ default: m.TeamView })));
 const PresenceView = lazy(() => import('./views/PresenceView').then((m) => ({ default: m.PresenceView })));
@@ -347,7 +346,7 @@ const MainLayout: React.FC = () => {
   const renderView = () => {
     switch (currentView) {
       case 'home':
-        return <Suspense fallback={viewFallback}><HomeView onNavigate={setCurrentView} /></Suspense>;
+        return <HomeView onNavigate={setCurrentView} />;
       case 'calendar':
         return <Suspense fallback={viewFallback}><CalendarView /></Suspense>;
       case 'team':
@@ -384,7 +383,7 @@ const MainLayout: React.FC = () => {
       case 'help':
         return <Suspense fallback={viewFallback}><HelpView onOpenTutorial={() => setIsTutorialOpen(true)} /></Suspense>;
       default:
-        return <Suspense fallback={viewFallback}><HomeView onNavigate={setCurrentView} /></Suspense>;
+        return <HomeView onNavigate={setCurrentView} />;
     }
   };
 
