@@ -111,9 +111,11 @@ export default defineConfig(() => {
       ],
     },
     resolve: {
-      dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
+      dedupe: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
       alias: {
         '@': path.resolve(__dirname, '.'),
+        react: path.resolve(__dirname, 'node_modules/react'),
+        'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
       },
     },
     define: {

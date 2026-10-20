@@ -48,3 +48,16 @@ export const consumePendingServiceRequestId = (): string | null => {
   pendingServiceRequestId = null;
   return id;
 };
+
+const EDIT_COLLAB_EVENT = 'dimensio:editCollaborator';
+
+export const navigateToEditCollaborator = (collaboratorId: string) => {
+  navigateTo('team');
+  window.dispatchEvent(new CustomEvent(EDIT_COLLAB_EVENT, { detail: collaboratorId }));
+};
+
+export const onEditCollaboratorRequested = (handler: (collabId: string) => void) => {
+  const listener = (e: Event) => handler((e as CustomEvent).detail as string);
+  window.addEventListener(EDIT_COLLAB_EVENT, listener);
+  return () => window.removeEventListener(EDIT_COLLAB_EVENT, listener);
+};

@@ -33,6 +33,9 @@ import {
   Mic,
   Power,
   Volume2,
+  Headphones,
+  Speaker,
+  RefreshCw,
 } from 'lucide-react';
 import {
   Card,
@@ -56,7 +59,7 @@ import { SupportCodeDispatcher } from '../components/SupportCodeDispatcher';
 import { UserNotificationsModal } from '../components/UserNotificationsModal';
 import { DimensioMonogram } from '../components/DimensioLogo';
 import { getTodayISO, formatDateBR, abbreviateName, escapeSearchTerm, matchesCollaboratorSearch } from '../utils/helpers';
-import { playNotificationSound, triggerDeviceVibration, unlockAudioContext } from '../utils/audioAlert';
+import { playNotificationSound, playSpeakerTestSound, triggerDeviceVibration, unlockAudioContext } from '../utils/audioAlert';
 import { showNativeOSNotification } from '../utils/notifications';
 import { APP_VERSION, BUILD_TS, GIT_COMMIT, GIT_BRANCH } from '../version';
 import { InfoHubLink } from '../types';
@@ -104,7 +107,19 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
     resumeAllAudio,
     relayOnline,
     joinTaskChannel,
+    audioOutputDevices,
+    audioOutputDeviceId,
+    isLoudspeaker,
+    supportsSinkId,
+    setAudioOutputDevice,
+    toggleLoudspeaker,
+    refreshAudioOutputDevices,
+    volume,
+    setVolume,
   } = useCommunication();
+
+  const [isTestingSpeaker, setIsTestingSpeaker] = useState(false);
+  const [isRefreshingDevices, setIsRefreshingDevices] = useState(false);
 
   // Read URL query parameters for default filters
   const urlParams = useMemo(() => {
@@ -885,6 +900,36 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
                     <Radio className={`w-3.5 h-3.5 ${transmissionLocked ? 'animate-pulse' : ''}`} />
                     <span className="hidden sm:inline">{transmissionLocked ? 'Destravar' : 'Travar'}</span>
                   </button>
+                  {/* Botão de Viva-Voz / Alto-Falante */}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const nowLoud = await toggleLoudspeaker();
+                      showNotice(
+                        nowLoud
+                          ? '🔊 Modo Viva-Voz ATIVO: Volume máximo no alto-falante principal'
+                          : 'Modo auricular/discreto ativado'
+                      );
+                    }}
+                    className={`px-2.5 py-2 rounded-xl border text-xs font-black flex items-center gap-1.5 cursor-pointer transition-all shadow-xs ${
+                      isLoudspeaker
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-emerald-500/20'
+                        : 'bg-[var(--surface-2)] border-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)]'
+                    }`}
+                    title={
+                      isLoudspeaker
+                        ? 'Viva-Voz ATIVO: Áudio no alto-falante principal em volume máximo (recomendado para coletores Honeywell). Clique para alternar.'
+                        : 'Modo Auricular: Clique para ativar o Viva-Voz (alto-falante).'
+                    }
+                  >
+                    {isLoudspeaker ? (
+                      <Volume2 className="w-3.5 h-3.5 text-white shrink-0" />
+                    ) : (
+                      <Headphones className="w-3.5 h-3.5 text-[var(--muted)] shrink-0" />
+                    )}
+                    <span>{isLoudspeaker ? 'Viva-Voz' : 'Auricular'}</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setActiveTab('comunicacao')}
@@ -893,19 +938,38 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
                   >
                     <span>Canais</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsSettingsModalOpen(true)}
+                    className="p-2 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] hover:bg-[var(--line)] text-[var(--ink)] text-xs font-bold cursor-pointer transition-colors"
+                    title="Configurações de alto-falantes, viva-voz e rádio"
+                  >
+                    <Settings className="w-4 h-4" />
+                  </button>
                 </>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRadioEnabled(true);
-                    resumeAllAudio();
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs"
-                >
-                  <Power className="w-3.5 h-3.5" />
-                  <span>Ligar Rádio</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRadioEnabled(true);
+                      resumeAllAudio();
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Power className="w-3.5 h-3.5" />
+                    <span>Ligar Rádio</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsSettingsModalOpen(true)}
+                    className="p-2 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] hover:bg-[var(--line)] text-[var(--ink)] text-xs font-bold cursor-pointer transition-colors"
+                    title="Configurações de alto-falantes, viva-voz e rádio"
+                  >
+                    <Settings className="w-4 h-4" />
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -1626,6 +1690,168 @@ export const OperatorPortalView: React.FC<PortalViewProps> = ({
                 <span>Atenção: O áudio poderá ser suspenso ao mudar de aba.</span>
               </div>
             )}
+          </div>
+
+          {/* Alto-Falante & Viva-Voz (Detecção e Seleção de Saída) */}
+          <div className="p-3.5 rounded-2xl bg-[var(--surface-2)] border border-[var(--line)] space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <Volume2 className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="font-black text-xs sm:text-sm text-[var(--ink)] uppercase">
+                  Alto-Falante & Viva-Voz (Saída de Áudio)
+                </div>
+                <div className="text-[11px] text-[var(--muted)] leading-tight">
+                  Controle de viva-voz potente para coletores Honeywell e alternância entre alto-falantes.
+                </div>
+              </div>
+            </div>
+
+            {/* Status de compatibilidade do navegador */}
+            <div className="flex items-center gap-2 p-2 rounded-xl text-[10.5px] font-bold bg-[var(--paper)] border border-[var(--line)]">
+              <div className={`w-2 h-2 rounded-full shrink-0 ${supportsSinkId ? 'bg-emerald-500' : 'bg-blue-500'}`} />
+              <span className="flex-1 text-[var(--ink)]">
+                {supportsSinkId
+                  ? 'Detecção nativa de alto-falantes suportada no navegador (setSinkId).'
+                  : 'Roteamento gerenciado via mixer e controle de volume nativo do aparelho.'}
+              </span>
+            </div>
+
+            {/* Toggle de Viva-Voz */}
+            <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-[var(--paper)] border border-[var(--line)]">
+              <div className="flex items-center gap-2.5">
+                <Speaker className="w-5 h-5 text-emerald-500 shrink-0" />
+                <div>
+                  <div className="font-black text-xs text-[var(--ink)] uppercase">
+                    Modo Viva-Voz Ativo (Loudspeaker)
+                  </div>
+                  <div className="text-[10.5px] text-[var(--muted)] leading-tight">
+                    Prioriza alto-falante principal em volume máximo (100%), ideal para galpão ou coletor acoplado.
+                  </div>
+                </div>
+              </div>
+              <Toggle
+                checked={isLoudspeaker}
+                onChange={async () => {
+                  const nowLoud = await toggleLoudspeaker();
+                  showNotice(
+                    nowLoud
+                      ? '🔊 Viva-Voz ATIVO: Volume máximo no alto-falante'
+                      : 'Modo auricular/discreto ativado'
+                  );
+                }}
+                className="shrink-0"
+              />
+            </div>
+
+            {/* Seletor de Alto-Falante */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-black uppercase text-[var(--ink)] flex items-center gap-1.5">
+                  <Headphones className="w-3.5 h-3.5 text-[var(--primary)]" />
+                  <span>Alto-Falante / Dispositivo de Saída</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsRefreshingDevices(true);
+                    await refreshAudioOutputDevices();
+                    setTimeout(() => setIsRefreshingDevices(false), 500);
+                    showNotice('Lista de alto-falantes atualizada com sucesso!');
+                  }}
+                  className="text-[10.5px] font-bold text-[var(--primary)] hover:underline flex items-center gap-1 cursor-pointer"
+                  title="Detectar novamente alto-falantes conectados"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isRefreshingDevices ? 'animate-spin' : ''}`} />
+                  <span>Atualizar Alto-Falantes</span>
+                </button>
+              </div>
+
+              <select
+                value={audioOutputDeviceId}
+                onChange={(e) => {
+                  setAudioOutputDevice(e.target.value);
+                  showNotice('Alto-falante de saída atualizado!');
+                }}
+                className="w-full p-2.5 bg-[var(--paper)] border border-[var(--line)] rounded-xl text-xs font-bold text-[var(--ink)] cursor-pointer focus:outline-none focus:border-[var(--primary)]"
+              >
+                <option value="default">
+                  🔊 Alto-Falante Padrão do Sistema (Automático / Principal)
+                </option>
+                {audioOutputDevices.map((d, index) => {
+                  const label = d.label || (d.deviceId === 'default' ? 'Padrão do Sistema' : `Saída de Áudio ${index + 1}`);
+                  return (
+                    <option key={d.deviceId || index} value={d.deviceId}>
+                      {label.toLowerCase().includes('speaker') || label.toLowerCase().includes('alto-falante')
+                        ? `📢 ${label} (Alto-falante)`
+                        : label.toLowerCase().includes('headphone') || label.toLowerCase().includes('auricular') || label.toLowerCase().includes('ear')
+                        ? `🎧 ${label} (Fone/Auricular)`
+                        : `🔊 ${label}`}
+                    </option>
+                  );
+                })}
+              </select>
+              <div className="text-[10px] text-[var(--muted)] flex items-center justify-between">
+                <span>
+                  {audioOutputDevices.length > 0
+                    ? `${audioOutputDevices.length} dispositivo(s) detectado(s).`
+                    : 'Usando dispositivo padrão do sistema operacional.'}
+                </span>
+                {isLoudspeaker && (
+                  <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">
+                    ● Viva-Voz priorizado
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Teste de Som e Slider de Volume */}
+            <div className="p-3 rounded-xl bg-[var(--paper)] border border-[var(--line)] space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-extrabold text-[var(--ink)]">
+                    Testar Saída no Alto-Falante
+                  </div>
+                  <div className="text-[10.5px] text-[var(--muted)]">
+                    Emite um toque melódico no alto-falante escolhido para confirmar o viva-voz.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsTestingSpeaker(true);
+                    showNotice('🔊 Tocando som de teste no alto-falante...');
+                    await playSpeakerTestSound(audioOutputDeviceId, volume);
+                    setTimeout(() => setIsTestingSpeaker(false), 600);
+                  }}
+                  disabled={isTestingSpeaker}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition-transform active:scale-95 shrink-0"
+                >
+                  <Volume2 className={`w-4 h-4 ${isTestingSpeaker ? 'animate-bounce' : ''}`} />
+                  <span>{isTestingSpeaker ? 'Tocando...' : 'Testar Som'}</span>
+                </button>
+              </div>
+
+              {/* Slider de Volume */}
+              <div className="pt-2 border-t border-[var(--line)] space-y-1">
+                <div className="flex items-center justify-between text-[11px] font-bold text-[var(--ink)]">
+                  <span>Volume do Rádio / Viva-Voz</span>
+                  <span className="font-mono text-emerald-600 dark:text-emerald-400 font-black">
+                    {Math.round((volume || 1.0) * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={volume || 1.0}
+                  onChange={(e) => setVolume(parseFloat(e.target.value))}
+                  className="w-full accent-emerald-500 cursor-pointer h-1.5 bg-[var(--line)] rounded-lg appearance-none"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Operador atual & opção de abreviar nomes é controlada pelo link/QR do portal */}

@@ -21,8 +21,6 @@ import {
   ShieldAlert,
   BookOpen,
   ClipboardList,
-  Activity,
-  Gauge,
   SlidersHorizontal,
   ListTodo,
   CheckSquare,
@@ -34,14 +32,12 @@ import {
   Sparkles,
   Upload,
   Download,
+  Activity,
   type LucideIcon,
 } from 'lucide-react';
 import {
   getCollaboratorStatus,
-  getTeamAbsenteeismRate,
-  getCollaboratorAbsenteeismRate,
   formatDateLongBR,
-  isAbsenteeismStatus,
   type StatusType,
 } from '../utils/helpers';
 import { isTaskDueOnDate, formatRecurrenceLabel } from '../utils/routineHelpers';
@@ -60,7 +56,6 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
     state,
     setDate,
     setSelectedGlobalFilters,
-    setAbsenteeismPeriodDays,
     showSubtasks,
     toggleScheduledTaskComplete,
     openSetupWizard,
@@ -122,26 +117,6 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
   statusByCollab.forEach((status) => {
     statusCounts[status] += 1;
   });
-
-  const absenteeismPeriodDays = state.absenteeismPeriodDays || 30;
-  const totalAbsentCount = filteredCollaborators.filter((c) =>
-    isAbsenteeismStatus(statusByCollab.get(c.id) || '')
-  ).length;
-
-  const teamAbsenteeismRate =
-    filteredCollaborators.length > 0
-      ? Math.round((totalAbsentCount / filteredCollaborators.length) * 100)
-      : 0;
-
-  const collabAbsenteeism = filteredCollaborators
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      role: c.role || 'Sem cargo',
-      rate: Math.round(getCollaboratorAbsenteeismRate(state, c, activeDate, absenteeismPeriodDays)),
-      absentNow: isAbsenteeismStatus(statusByCollab.get(c.id) || ''),
-    }))
-    .sort((a, b) => b.rate - a.rate || Number(b.absentNow) - Number(a.absentNow));
 
   const presentIds = new Set(
     filteredCollaborators.filter((c) => statusByCollab.get(c.id) === 'presente' || statusByCollab.get(c.id) === 'atraso').map((c) => c.id)
@@ -500,7 +475,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
           }
         />
 
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCard
             label="Totais"
             value={filteredCollaborators.length}
@@ -529,20 +504,12 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
             tone="primary"
             hint="Presentes com tarefa"
           />
-          <StatCard
-            label="Absenteísmo"
-            value={`${teamAbsenteeismRate}%`}
-            icon={Activity}
-            tone="danger"
-            hint={`${statusCounts.ausente} ausente(s) no dia`}
-          />
         </div>
 
         <div className="mt-5 pt-4 border-t border-[var(--line)]">
           <SectionHeader
             icon={<UsersIcon className="w-4 h-4" />}
             title="Afastamentos & Disponibilidade"
-            right={<Badge tone="neutral">Período: {absenteeismPeriodDays} dias</Badge>}
           />
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             {statusCards.map(({ key, label, value, icon: Icon, tone }) => (
@@ -551,7 +518,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
           </div>
         </div>
 
-        <div className="mt-5 pt-4 border-t border-[var(--line)] grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="mt-5 pt-4 border-t border-[var(--line)]">
           <div className="min-w-0">
             <SectionHeader
               icon={<ClipboardList className="w-4 h-4" />}
@@ -569,11 +536,11 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
                 description="Cadastre tarefas na tela Equipe & Cadastros."
               />
             ) : (
-              <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1.5">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pr-1.5">
                 {taskStats.map((t) => {
                   const pct = t.total > 0 ? Math.round((t.present / t.total) * 100) : 0;
                   return (
-                    <div key={t.id} className="p-1.5 rounded-lg hover:bg-[var(--surface-2)] transition-colors">
+                    <div key={t.id} className="p-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface-1)] hover:bg-[var(--surface-2)] transition-colors space-y-2">
                       <div className="flex items-center gap-2.5">
                         <div
                           className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center text-xs font-black ${
@@ -601,7 +568,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
                       </div>
 
                       {showSubtasks && t.hasSubtasks && (
-                        <div className="mt-1.5 ml-10 pl-2.5 border-l-2 border-[var(--primary-border)]/60 space-y-1">
+                        <div className="mt-1.5 pl-2.5 border-l-2 border-[var(--primary-border)]/60 space-y-1">
                           {t.directTotal > 0 && (
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-[9.5px] font-bold text-[var(--muted)] truncate">Geral / Apoio</span>
@@ -624,72 +591,6 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate }) => {
                     </div>
                   );
                 })}
-              </div>
-            )}
-          </div>
-
-          <div className="min-w-0">
-            <SectionHeader
-              icon={<Gauge className="w-4 h-4" />}
-              title="Absenteísmo por Colaborador"
-              right={
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-bold text-[var(--muted)]">Média: {teamAbsenteeismRate}%</span>
-                  <select
-                    value={absenteeismPeriodDays}
-                    onChange={(e) => setAbsenteeismPeriodDays(Number(e.target.value))}
-                    title="Período de cálculo do absenteísmo"
-                    className="px-2 py-1 bg-[var(--surface-2)] border border-[var(--line)] rounded-lg text-[10px] font-bold text-[var(--ink)] cursor-pointer focus:outline-none focus:border-rose-500"
-                  >
-                    {[7, 15, 30, 45, 60, 90].map((d) => (
-                      <option key={d} value={d}>{d} dias</option>
-                    ))}
-                  </select>
-                </div>
-              }
-            />
-            {collabAbsenteeism.length === 0 ? (
-              <EmptyState
-                icon={Users}
-                title="Nenhum colaborador no filtro atual"
-                description="Ajuste os filtros de turno ou time para visualizar o absenteísmo."
-              />
-            ) : (
-              <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1.5">
-                {collabAbsenteeism.map((c) => (
-                  <div key={c.id} className="flex items-center gap-2.5 p-1 rounded-lg hover:bg-[var(--surface-2)] transition-colors">
-                    <div
-                      className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center text-[10px] font-black ${
-                        c.rate > 0
-                          ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400'
-                          : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400'
-                      }`}
-                    >
-                      {c.rate}%
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-[var(--ink)] truncate">
-                          {c.name}
-                          {c.absentNow && (
-                            <span className="ml-1.5 px-1.5 py-0.5 bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 rounded text-[9px] font-black uppercase align-middle">
-                              ausente hoje
-                            </span>
-                          )}
-                        </span>
-                        <span className="text-[10px] font-bold text-[var(--muted)] shrink-0">{c.role}</span>
-                      </div>
-                      <div className="mt-1 h-1.5 bg-[var(--surface-3)] rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-300 ${
-                            c.rate > 0 ? 'bg-rose-500' : 'bg-emerald-500'
-                          }`}
-                          style={{ width: `${Math.min(100, c.rate)}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
               </div>
             )}
           </div>

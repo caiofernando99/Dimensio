@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { Calendar as CalendarIcon, Menu, Cloud, UserCheck, Bell, User, Clock, Globe, BookOpen, Database, LogOut } from 'lucide-react';
+import { Calendar as CalendarIcon, Menu, Cloud, UserCheck, Bell, User, Clock, Globe, Database } from 'lucide-react';
 import { GlobalSearch } from './GlobalSearch';
 import { UserIdentifyModal } from './UserIdentifyModal';
 import { UserNotificationsModal } from './UserNotificationsModal';
-import { LogoutModal } from './LogoutModal';
-import { SwDiagnosticIndicator } from './SwDiagnosticIndicator';
 import { updateCloudPresence, subscribeToCloudPresence, CloudPresenceUser } from '../lib/firestoreStorage';
 import { useI18n } from '../i18n';
 
@@ -20,7 +18,6 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
   const { state, setDate, identifiedUser, getUnreadNotificationsCount } = useApp();
   const { t } = useI18n();
   const [isIdentifyModalOpen, setIsIdentifyModalOpen] = useState(false);
-  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const [isNotifModalOpen, setIsNotifModalOpen] = useState(false);
   const [onlineLeaders, setOnlineLeaders] = useState<CloudPresenceUser[]>([]);
 
@@ -160,9 +157,6 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
             )}
           </span>
 
-          {/* Service Worker Background Sync Diagnostic Indicator */}
-          <SwDiagnosticIndicator />
-
           {/* User Identify */}
           <button
             type="button"
@@ -182,17 +176,6 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
             <span className="max-w-[70px] truncate">{identifiedUser ? identifiedUser.name : t('header.identify')}</span>
           </button>
 
-          {/* Botão Sair da Sessão / Limpar Coletor */}
-          <button
-            type="button"
-            onClick={() => setIsLogoutModalOpen(true)}
-            className="flex px-2 py-1 rounded-lg text-[10.5px] font-extrabold items-center gap-1 transition-colors cursor-pointer border border-rose-200 dark:border-rose-900/50 bg-rose-50/60 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/60 shadow-2xs shrink-0"
-            title="Sair da sessão, desconectar rádio e limpar presença deste dispositivo"
-          >
-            <LogOut className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Sair</span>
-          </button>
-
           {/* Notifications */}
           <button
             type="button"
@@ -207,24 +190,11 @@ export const Header: React.FC<HeaderProps> = ({ pageTitle, onOpenGuide, onToggle
               </span>
             )}
           </button>
-
-          {/* Ajuda */}
-          {onOpenGuide && (
-            <button
-              onClick={onOpenGuide}
-              className="hidden sm:flex px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10.5px] font-black transition-colors items-center gap-1 cursor-pointer shrink-0"
-              title={t('header.openHelp')}
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span className="hidden xl:inline">{t('header.openHelp')}</span>
-            </button>
-          )}
         </div>
       </div>
 
       <UserIdentifyModal isOpen={isIdentifyModalOpen} onClose={() => setIsIdentifyModalOpen(false)} />
       <UserNotificationsModal isOpen={isNotifModalOpen} onClose={() => setIsNotifModalOpen(false)} />
-      <LogoutModal isOpen={isLogoutModalOpen} onClose={() => setIsLogoutModalOpen(false)} />
     </header>
   );
 };

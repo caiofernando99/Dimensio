@@ -1,3 +1,54 @@
+// Polyfill protetivo para ambientes corporativos com localStorage/sessionStorage bloqueados por GPO/política
+(() => {
+  if (typeof window === 'undefined') return;
+
+  function createMemoryStore(): Storage {
+    const map = new Map<string, string>();
+    return {
+      getItem: (key: string) => map.get(String(key)) ?? null,
+      setItem: (key: string, val: string) => { map.set(String(key), String(val)); },
+      removeItem: (key: string) => { map.delete(String(key)); },
+      clear: () => { map.clear(); },
+      key: (idx: number) => Array.from(map.keys())[idx] ?? null,
+      get length() { return map.size; },
+    };
+  }
+
+  // Verifica se localStorage é acessível sem estourar DOMException/SecurityError
+  try {
+    const test = '__dimensio_probe__';
+    window.localStorage.setItem(test, '1');
+    window.localStorage.removeItem(test);
+  } catch {
+    try {
+      const memoryStorage = createMemoryStore();
+      Object.defineProperty(window, 'localStorage', {
+        value: memoryStorage,
+        configurable: true,
+        writable: true,
+      });
+      console.warn('[Dimensio] Modo corporativo seguro ativado: localStorage em memória.');
+    } catch {}
+  }
+
+  // Verifica se sessionStorage é acessível
+  try {
+    const test = '__dimensio_probe__';
+    window.sessionStorage.setItem(test, '1');
+    window.sessionStorage.removeItem(test);
+  } catch {
+    try {
+      const memoryStorage = createMemoryStore();
+      Object.defineProperty(window, 'sessionStorage', {
+        value: memoryStorage,
+        configurable: true,
+        writable: true,
+      });
+      console.warn('[Dimensio] Modo corporativo seguro ativado: sessionStorage em memória.');
+    } catch {}
+  }
+})();
+
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';

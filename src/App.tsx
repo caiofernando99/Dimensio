@@ -24,7 +24,7 @@ import { HomeView } from './views/HomeView';
 const CalendarView = lazy(() => import('./views/CalendarView').then((m) => ({ default: m.CalendarView })));
 const TeamView = lazy(() => import('./views/TeamView').then((m) => ({ default: m.TeamView })));
 const PresenceView = lazy(() => import('./views/PresenceView').then((m) => ({ default: m.PresenceView })));
-const AssignmentView = lazy(() => import('./views/AssignmentView').then((m) => ({ default: m.AssignmentView })));
+const AssignmentView = lazy(() => import('./views/AssignmentView').then((m) => ({ default: m.default || m.AssignmentView })));
 const BreaksView = lazy(() => import('./views/BreaksView').then((m) => ({ default: m.BreaksView })));
 const ShareView = lazy(() => import('./views/ShareView').then((m) => ({ default: m.ShareView })));
 const ReportView = lazy(() => import('./views/ReportView').then((m) => ({ default: m.ReportView })));
@@ -437,12 +437,12 @@ const MainLayout: React.FC = () => {
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={currentView}
-              initial={{ opacity: 0, y: 10, filter: 'blur(2px)' }}
-              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-              exit={{ opacity: 0, y: -8, filter: 'blur(2px)' }}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
               transition={{
-                duration: 0.22,
-                ease: [0.22, 1, 0.36, 1], // fluid ease-out cubic
+                duration: 0.16,
+                ease: 'easeOut',
               }}
               className="h-full max-w-[1600px] w-full mx-auto"
             >

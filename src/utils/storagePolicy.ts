@@ -30,22 +30,37 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
 };
 
 let activeStorage: Storage | null = null;
+const memoryStore = new Map<string, string>();
+
+function createFunctionalMemoryStorage(): Storage {
+  return {
+    getItem: (key: string) => memoryStore.get(key) ?? null,
+    setItem: (key: string, value: string) => { memoryStore.set(key, String(value)); },
+    removeItem: (key: string) => { memoryStore.delete(key); },
+    clear: () => { memoryStore.clear(); },
+    key: (index: number) => Array.from(memoryStore.keys())[index] ?? null,
+    get length() { return memoryStore.size; },
+  };
+}
 
 function detectDefaultStorage(): Storage {
   try {
-    if (typeof localStorage !== 'undefined') return localStorage;
-    if (typeof sessionStorage !== 'undefined') return sessionStorage;
-  } catch {
-    // ignore
-  }
-  return {
-    getItem: () => null,
-    setItem: () => {},
-    removeItem: () => {},
-    clear: () => {},
-    key: () => null,
-    length: 0,
-  } as Storage;
+    if (typeof localStorage !== 'undefined') {
+      const test = '__dimensio_test__';
+      localStorage.setItem(test, '1');
+      localStorage.removeItem(test);
+      return localStorage;
+    }
+  } catch {}
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const test = '__dimensio_test__';
+      sessionStorage.setItem(test, '1');
+      sessionStorage.removeItem(test);
+      return sessionStorage;
+    }
+  } catch {}
+  return createFunctionalMemoryStorage();
 }
 
 export function readSessionConfig(): SessionConfig {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   X,
@@ -192,7 +193,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     onClose();
   };
 
-  return (
+  if (!isOpen || typeof document === 'undefined') return null;
+
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
       <motion.div
         initial={{ scale: 0.95, opacity: 0 }}
@@ -719,6 +722,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         description={`Tem certeza que deseja excluir a tarefa "${taskToEdit?.name || ''}"? As subtarefas vinculadas se tornarão tarefas principais.`}
         confirmText="Excluir"
       />
-    </div>
+    </div>,
+    document.body
   );
 };

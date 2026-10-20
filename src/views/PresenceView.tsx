@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../context/AppContext';
 import { SearchInput } from '../components/SearchInput';
@@ -726,59 +727,64 @@ export const PresenceView: React.FC = () => {
         const posX = Math.max(8, Math.min(absenceDropdown.x, (typeof window !== 'undefined' ? window.innerWidth : 400) - 230));
         const posY = Math.max(8, Math.min(absenceDropdown.y, (typeof window !== 'undefined' ? window.innerHeight : 600) - 230));
 
-        return (
-          <div
-            className="fixed z-50"
-            style={{ left: `${posX}px`, top: `${posY}px` }}
-          >
-            <div
-              className="bg-[var(--paper)] border border-[var(--line)] rounded-xl shadow-[var(--shadow-pop)] p-1.5 min-w-[210px] animate-in fade-in-0 zoom-in-95 duration-100 relative"
-              role="menu"
-            >
-              {absenceOptions.map((opt) => {
-                const isCurrentAtraso = opt.value === 'atraso' && activeDropdownStatus === 'atraso';
-                return (
-                  <button
-                    key={opt.value}
-                    onClick={() => handleAbsenceSelect(absenceDropdown.collaboratorId, opt.value)}
-                    className={`w-full px-3 py-2 rounded-lg text-xs font-bold flex items-center justify-between gap-2.5 transition-colors cursor-pointer ${
-                      isCurrentAtraso
-                        ? 'bg-amber-100/80 text-amber-900 dark:bg-amber-950/70 dark:text-amber-200 border border-amber-300 dark:border-amber-700'
-                        : 'hover:bg-[var(--bg)]'
-                    }`}
-                    role="menuitem"
+        return typeof document !== 'undefined'
+          ? createPortal(
+              <>
+                <div
+                  className="fixed inset-0 z-[60] bg-black/10"
+                  onClick={handleCancelAbsence}
+                  aria-hidden="true"
+                />
+                <div
+                  className="fixed z-[70]"
+                  style={{ left: `${posX}px`, top: `${posY}px` }}
+                >
+                  <div
+                    className="bg-[var(--paper)] border border-[var(--line)] rounded-xl shadow-[var(--shadow-pop)] p-1.5 min-w-[210px] animate-in fade-in-0 zoom-in-95 duration-100 relative"
+                    role="menu"
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <opt.icon className={`w-4 h-4 ${isCurrentAtraso ? 'text-amber-600 dark:text-amber-400' : opt.color} shrink-0`} />
-                      <span className={isCurrentAtraso ? 'text-amber-900 dark:text-amber-200 font-extrabold truncate' : opt.color}>
-                        {isCurrentAtraso ? 'Remover Atraso' : opt.label}
-                      </span>
-                    </div>
-                    {isCurrentAtraso && (
-                      <span className="text-[9.5px] font-black uppercase bg-amber-200 dark:bg-amber-900/90 text-amber-900 dark:text-amber-200 px-1.5 py-0.5 rounded shrink-0">
-                        Desfazer
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-              <div className="border-t border-[var(--line)] my-1"></div>
-              <button
-                onClick={handleCancelAbsence}
-                className="w-full px-3 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)] transition-colors cursor-pointer"
-                role="menuitem"
-              >
-                <X className="w-3.5 h-3.5" />
-                <span>Cancelar</span>
-              </button>
-            </div>
-            <div
-              className="fixed inset-0 -z-10"
-              onClick={handleCancelAbsence}
-              aria-hidden="true"
-            />
-          </div>
-        );
+                    {absenceOptions.map((opt) => {
+                      const isCurrentAtraso = opt.value === 'atraso' && activeDropdownStatus === 'atraso';
+                      return (
+                        <button
+                          key={opt.value}
+                          onClick={() => handleAbsenceSelect(absenceDropdown.collaboratorId, opt.value)}
+                          className={`w-full px-3 py-2 rounded-lg text-xs font-bold flex items-center justify-between gap-2.5 transition-colors cursor-pointer ${
+                            isCurrentAtraso
+                              ? 'bg-amber-100/80 text-amber-900 dark:bg-amber-950/70 dark:text-amber-200 border border-amber-300 dark:border-amber-700'
+                              : 'hover:bg-[var(--bg)]'
+                          }`}
+                          role="menuitem"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <opt.icon className={`w-4 h-4 ${isCurrentAtraso ? 'text-amber-600 dark:text-amber-400' : opt.color} shrink-0`} />
+                            <span className={isCurrentAtraso ? 'text-amber-900 dark:text-amber-200 font-extrabold truncate' : opt.color}>
+                              {isCurrentAtraso ? 'Remover Atraso' : opt.label}
+                            </span>
+                          </div>
+                          {isCurrentAtraso && (
+                            <span className="text-[9.5px] font-black uppercase bg-amber-200 dark:bg-amber-900/90 text-amber-900 dark:text-amber-200 px-1.5 py-0.5 rounded shrink-0">
+                              Desfazer
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                    <div className="border-t border-[var(--line)] my-1"></div>
+                    <button
+                      onClick={handleCancelAbsence}
+                      className="w-full px-3 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)] transition-colors cursor-pointer"
+                      role="menuitem"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Cancelar</span>
+                    </button>
+                  </div>
+                </div>
+              </>,
+              document.body
+            )
+          : null;
       })()}
     </div>
   );

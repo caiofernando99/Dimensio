@@ -253,7 +253,55 @@ export function playRadioPttChirp(type: 'start' | 'stop' | 'incoming') {
   } catch {
     // Ignore audio restrictions
   }
+}/**
+ * Toca tom de teste cristalino no dispositivo de áudio/alto-falante selecionado
+ * com suporte nativo a setSinkId (direcionamento de saída de áudio).
+ */
+export async function playSpeakerTestSound(deviceId?: string, volume: number = 1.0): Promise<boolean> {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return false;
+    const ctx = new AudioCtx();
+    const dest = ctx.createMediaStreamDestination();
+    const now = ctx.currentTime;
+    const targetVol = Math.max(0.1, Math.min(1.0, volume));
+
+    // Toque ascendente melódico e cristalino de 3 notas: C5 (523Hz) -> G5 (784Hz) -> C6 (1046Hz)
+    const tones = [
+      { freq: 523.25, time: 0, dur: 0.18 },
+      { freq: 783.99, time: 0.10, dur: 0.22 },
+      { freq: 1046.50, time: 0.22, dur: 0.38 },
+    ];
+
+    tones.forEach(({ freq, time, dur }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + time);
+      gain.gain.setValueAtTime(targetVol, now + time);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + time + dur);
+      osc.connect(gain);
+      gain.connect(dest);
+      gain.connect(ctx.destination);
+      osc.start(now + time);
+      osc.stop(now + time + dur);
+    });
+
+    const audioEl = new Audio();
+    audioEl.srcObject = dest.stream;
+    audioEl.volume = targetVol;
+
+    if (deviceId && 'setSinkId' in audioEl && typeof (audioEl as any).setSinkId === 'function') {
+      try {
+        await (audioEl as any).setSinkId(deviceId === 'default' ? '' : deviceId);
+      } catch {}
+    }
+
+    await audioEl.play();
+    return true;
+  } catch (err) {
+    console.warn('[AudioAlert] Erro ao testar alto-falante:', err);
+    return false;
+  }
 }
-
-
 

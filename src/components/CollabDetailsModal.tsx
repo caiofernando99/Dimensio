@@ -1,18 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { getCollaboratorStatus, type StatusType } from '../utils/helpers';
+import { navigateToEditCollaborator } from '../utils/navigation';
 import type { Collaborator } from '../types';
 import {
   X,
   Sparkles,
   ClipboardList,
   Clock,
-  StickyNote,
   Trash2,
   UserCheck,
   UserRound,
   Users,
-  Send,
   RefreshCw,
   Sun,
   ExternalLink,
@@ -58,23 +58,14 @@ export const CollabDetailsModal: React.FC<CollabDetailsModalProps> = ({ collab, 
     assignTask,
     unassignTask,
     moveBreakInterval,
-    addCollabNote,
-    removeCollabNote,
     setStatusReason,
-    createServiceRequest,
     identifiedUser,
     showNotice,
   } = useApp();
 
-  const [noteText, setNoteText] = useState('');
   const [statusReason, setStatusReasonText] = useState('');
-  const [reqType, setReqType] = useState<'aviso' | 'acao_sistemica'>('acao_sistemica');
-  const [reqPriority, setReqPriority] = useState<'baixa' | 'media' | 'alta' | 'urgente'>('media');
-  const [reqTitle, setReqTitle] = useState('');
-  const [reqDescription, setReqDescription] = useState('');
   const [editingProfileUrl, setEditingProfileUrl] = useState(false);
   const [profileUrlInput, setProfileUrlInput] = useState(collab.companyProfileUrl || collab.profileUrl || '');
-  const noteInputRef = useRef<HTMLInputElement>(null);
 
   // Sync state if collab changes
   const liveCollab = state.collaborators.find((c) => c.id === collab.id) || collab;
@@ -108,7 +99,6 @@ export const CollabDetailsModal: React.FC<CollabDetailsModalProps> = ({ collab, 
   const activeTasks = state.tasks.filter((t) => t.active !== false);
   const currentBreak = state.breaks.find((b) => (dayIntervals[b.id] || []).includes(collab.id));
   const allSkills = Object.entries(collab.skills || {}).filter(([_, lvl]) => Number(lvl) > 0);
-  const collabNotes = state.tempNotes?.[collab.id] || [];
 
   const initials = collab.name
     .trim()
@@ -133,13 +123,6 @@ export const CollabDetailsModal: React.FC<CollabDetailsModalProps> = ({ collab, 
     moveBreakInterval(collab.id, currentBreak?.id || null, breakId);
   };
 
-  const handleAddNote = () => {
-    if (!noteText.trim()) return;
-    addCollabNote(collab.id, noteText);
-    setNoteText('');
-    noteInputRef.current?.focus();
-  };
-
   const handleSetStatus = (st: StatusType) => {
     const isTroca = st === 'presente' && statusInfo.isOffScale && statusInfo.status !== 'presente';
     setStatusReason(collab.id, st, statusReason.trim() || (isTroca ? 'Troca de Folga' : 'Ajuste manual'));
@@ -147,38 +130,14 @@ export const CollabDetailsModal: React.FC<CollabDetailsModalProps> = ({ collab, 
     showNotice(`Status "${STATUS_META[st].label}" aplicado para ${collab.name}${isTroca ? ' (Troca de Folga)' : ''}!`);
   };
 
-  const handleSubmitRequest = () => {
-    if (!identifiedUser) {
-      showNotice('Identifique-se no topo da tela para criar pedidos.');
-      return;
-    }
-    if (!reqTitle.trim()) {
-      showNotice('Informe o título do pedido.');
-      return;
-    }
-    const result = createServiceRequest({
-      type: reqType,
-      title: reqTitle.trim(),
-      description: reqDescription.trim() || 'Registrado a partir do menu do colaborador.',
-      priority: reqPriority,
-      shift: collab.shift || state.teamShift || 'T2',
-      targetShiftAudience: 'atual',
-      targetId: 'admin',
-      targetName: 'Administrador / Líder de Turno',
-      collaboratorId: collab.id,
-      collaboratorName: collab.name,
-      selectedCollaborators: [collab.name],
-    });
-    if (result.success) {
-      showNotice(`✅ Pedido "${reqTitle.trim()}" enviado para ${collab.name}!`);
-      setReqTitle('');
-      setReqDescription('');
-    } else {
-      showNotice(result.message);
-    }
+  const handleGoToEdit = () => {
+    onClose();
+    navigateToEditCollaborator(collab.id);
   };
 
-  return (
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200"
       onMouseDown={(e) => {
@@ -201,6 +160,15 @@ export const CollabDetailsModal: React.FC<CollabDetailsModalProps> = ({ collab, 
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleGoToEdit}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-extrabold bg-[var(--primary-soft)] text-[var(--primary)] border border-[var(--primary-border)] hover:bg-[var(--primary)] hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+              title="Ir para o cadastro deste colaborador na Equipe para editar todos os dados"
+            >
+              <Edit2 className="w-3.5 h-3.5" />
+              <span>Editar Perfil</span>
+            </button>
             <span
               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black border ${meta.bg} ${meta.text}`}
             >
@@ -510,127 +478,7 @@ export const CollabDetailsModal: React.FC<CollabDetailsModalProps> = ({ collab, 
             </div>
           </section>
 
-          {/* Novo pedido / comunicado */}
-          <section className="bg-[var(--bg)] border border-[var(--line)] rounded-xl p-3.5">
-            <h4 className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)] mb-2.5 flex items-center gap-1.5">
-              <Send className="w-3.5 h-3.5 text-amber-500" /> Novo pedido / comunicado
-            </h4>
-            <div className="grid grid-cols-2 gap-2 mb-2">
-              <label className="block">
-                <span className="text-[9px] font-black uppercase text-[var(--muted)]">Tipo</span>
-                <select
-                  value={reqType}
-                  onChange={(e) => setReqType(e.target.value as 'aviso' | 'acao_sistemica')}
-                  className="w-full mt-0.5 px-2.5 py-1.5 bg-[var(--paper)] border border-[var(--line)] rounded-lg text-[11px] font-bold text-[var(--ink)] focus:outline-none focus:border-[var(--primary)] cursor-pointer"
-                >
-                  <option value="acao_sistemica">Pedido de Ação</option>
-                  <option value="aviso">Aviso</option>
-                </select>
-              </label>
-              <label className="block">
-                <span className="text-[9px] font-black uppercase text-[var(--muted)]">Prioridade</span>
-                <select
-                  value={reqPriority}
-                  onChange={(e) => setReqPriority(e.target.value as 'baixa' | 'media' | 'alta' | 'urgente')}
-                  className="w-full mt-0.5 px-2.5 py-1.5 bg-[var(--paper)] border border-[var(--line)] rounded-lg text-[11px] font-bold text-[var(--ink)] focus:outline-none focus:border-[var(--primary)] cursor-pointer"
-                >
-                  <option value="baixa">Baixa</option>
-                  <option value="media">Média</option>
-                  <option value="alta">Alta</option>
-                  <option value="urgente">Urgente</option>
-                </select>
-              </label>
-            </div>
-            <input
-              type="text"
-              value={reqTitle}
-              onChange={(e) => setReqTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSubmitRequest();
-              }}
-              placeholder="Título do pedido / comunicado (ex: Troca de turno)..."
-              className="w-full px-3 py-2 bg-[var(--paper)] border border-[var(--line)] rounded-lg text-xs font-semibold text-[var(--ink)] placeholder:text-[var(--muted)]/70 focus:outline-none focus:border-[var(--primary)] mb-2"
-            />
-            <textarea
-              value={reqDescription}
-              onChange={(e) => setReqDescription(e.target.value)}
-              rows={2}
-              placeholder="Descrição detalhada (opcional)..."
-              className="w-full px-3 py-2 bg-[var(--paper)] border border-[var(--line)] rounded-lg text-xs font-semibold text-[var(--ink)] placeholder:text-[var(--muted)]/70 focus:outline-none focus:border-[var(--primary)] resize-none mb-2.5"
-            />
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold text-[var(--muted)]">
-                {identifiedUser ? `Enviado como ${identifiedUser.name}` : 'Identifique-se para enviar'}
-              </span>
-              <button
-                onClick={handleSubmitRequest}
-                disabled={!reqTitle.trim() || !identifiedUser}
-                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[10px] font-black rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
-              >
-                <Send className="w-3 h-3" /> Enviar pedido
-              </button>
-            </div>
-          </section>
 
-          {/* Lembretes temporários */}
-          <section className="bg-[var(--bg)] border border-[var(--line)] rounded-xl p-3.5">
-            <h4 className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)] mb-1 flex items-center gap-1.5">
-              <StickyNote className="w-3.5 h-3.5 text-amber-500" /> Lembretes / Observações temporárias
-            </h4>
-            <p className="text-[10px] font-semibold text-[var(--muted)] mb-2.5">
-              Anotações internas que <span className="font-black">não</span> aparecem como ocorrência no relatório diário.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                ref={noteInputRef}
-                type="text"
-                value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleAddNote();
-                }}
-                placeholder="Ex.: liberado mais cedo amanhã..."
-                className="flex-1 px-3 py-2 bg-[var(--paper)] border border-[var(--line)] rounded-lg text-xs font-semibold text-[var(--ink)] placeholder:font-medium placeholder:text-[var(--muted)]/70 focus:outline-none focus:border-[var(--primary)]"
-              />
-              <button
-                onClick={handleAddNote}
-                disabled={!noteText.trim()}
-                className="px-3 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-black transition-colors cursor-pointer"
-              >
-                Adicionar lembrete
-              </button>
-            </div>
-            {collabNotes.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {collabNotes.map((n) => (
-                  <div
-                    key={n.id}
-                    className="flex items-start justify-between gap-2 bg-[var(--paper)] border border-[var(--line)] rounded-lg px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-[var(--ink)]">{n.text}</p>
-                      <p className="text-[10px] font-semibold text-[var(--muted)]">
-                        {new Date(n.createdAt).toLocaleString('pt-BR', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          year: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => removeCollabNote(collab.id, n.id)}
-                      className="p-1 rounded-lg text-[var(--muted)] hover:text-rose-600 hover:bg-rose-100/60 dark:hover:bg-rose-950/40 transition-colors cursor-pointer shrink-0"
-                      title="Remover lembrete"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
 
           <div className="flex items-center justify-between gap-2 text-[10px] font-bold text-[var(--muted)] pt-1">
             <span className="flex items-center gap-1">
@@ -642,6 +490,7 @@ export const CollabDetailsModal: React.FC<CollabDetailsModalProps> = ({ collab, 
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

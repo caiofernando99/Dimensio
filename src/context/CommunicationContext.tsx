@@ -64,6 +64,7 @@ export interface CommContextType {
   audioOutputDevices: MediaDeviceInfo[];
   audioOutputDeviceId: string;
   isLoudspeaker: boolean;
+  supportsSinkId: boolean;
   setAudioOutputDevice: (deviceId: string) => Promise<boolean>;
   toggleLoudspeaker: () => Promise<boolean>;
   refreshAudioOutputDevices: () => Promise<void>;
@@ -858,6 +859,10 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [enabled, acquireMic]);
 
+  const supportsSinkId = useMemo(() => {
+    return typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype;
+  }, []);
+
   const refreshAudioOutputDevices = useCallback(async () => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return;
     try {
@@ -874,15 +879,17 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       localStorage.setItem('dimensio_audio_output_id', deviceId);
     } catch {}
 
+    const targetSink = (!deviceId || deviceId === 'default') ? '' : deviceId;
     const promises: Promise<void>[] = [];
     audioElsRef.current.forEach((el) => {
       if ('setSinkId' in el && typeof (el as any).setSinkId === 'function') {
-        promises.push((el as any).setSinkId(deviceId).catch(() => {}));
+        promises.push((el as any).setSinkId(targetSink).catch(() => {}));
       }
     });
     if (liveAudioElRef.current && 'setSinkId' in liveAudioElRef.current && typeof (liveAudioElRef.current as any).setSinkId === 'function') {
-      promises.push((liveAudioElRef.current as any).setSinkId(deviceId).catch(() => {}));
+      promises.push((liveAudioElRef.current as any).setSinkId(targetSink).catch(() => {}));
     }
+    mediaKeepalive.setSinkId(deviceId).catch(() => {});
     await Promise.all(promises);
     return true;
   }, []);
@@ -901,14 +908,27 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           d.label.toLowerCase().includes('speaker') ||
           d.label.toLowerCase().includes('alto-falante') ||
           d.label.toLowerCase().includes('viva-voz') ||
-          d.label.toLowerCase().includes('loudspeaker')
+          d.label.toLowerCase().includes('loudspeaker') ||
+          d.label.toLowerCase().includes('externo')
       );
       if (speakerDev) {
         await setAudioOutputDevice(speakerDev.deviceId);
       } else {
         await setAudioOutputDevice('default');
       }
+    } else if (!next && audioOutputDevices.length > 0) {
+      const earDev = audioOutputDevices.find(
+        (d) =>
+          d.label.toLowerCase().includes('earpiece') ||
+          d.label.toLowerCase().includes('auricular') ||
+          d.label.toLowerCase().includes('fone') ||
+          d.label.toLowerCase().includes('headphone')
+      );
+      if (earDev) {
+        await setAudioOutputDevice(earDev.deviceId);
+      }
     }
+
     const targetVol = next ? 1.0 : 0.65;
     setVolumeState(targetVol);
     volumeRef.current = targetVol;
@@ -2665,6 +2685,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     audioOutputDevices,
     audioOutputDeviceId,
     isLoudspeaker,
+    supportsSinkId,
     setAudioOutputDevice,
     toggleLoudspeaker,
     refreshAudioOutputDevices,

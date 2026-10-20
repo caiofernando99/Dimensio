@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { SpreadsheetMappingModal } from '../components/SpreadsheetMappingModal';
 import { TaskModal } from '../components/TaskModal';
 import { CollaboratorModal } from '../components/CollaboratorModal';
+import { onEditCollaboratorRequested } from '../utils/navigation';
 import {
   UserPlus,
   Upload,
@@ -144,6 +145,18 @@ export const TeamView: React.FC = () => {
       }
     }, 100);
   };
+
+  useEffect(() => {
+    return onEditCollaboratorRequested((collabId) => {
+      setActiveFolder('collaborators');
+      setCollabListMode('active');
+      const target = state.collaborators.find((c) => c.id === collabId);
+      if (target) {
+        setCollabToEdit(target);
+        setCollabModalOpen(true);
+      }
+    });
+  }, [state.collaborators]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -499,7 +512,7 @@ export const TeamView: React.FC = () => {
               }`}
             >
               <Users className="w-4 h-4 shrink-0" />
-              <span>Lista Ativa ({state.collaborators.length})</span>
+              <span>Lista de Colaboradores ({state.collaborators.length})</span>
             </button>
             <button
               type="button"

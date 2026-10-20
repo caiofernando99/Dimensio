@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { SearchInput } from '../components/SearchInput';
 import { MultiSelectFilter } from '../components/MultiSelectFilter';
@@ -101,6 +102,7 @@ export const AssignmentView: React.FC = () => {
   const [showInactiveTasks, setShowInactiveTasks] = useState(false);
   const [isAutoAssigning, setIsAutoAssigning] = useState(false);
   const [autoAssignModalOpen, setAutoAssignModalOpen] = useState(false);
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
 
   // Collapsed state for parent task subdivisions
   const [collapsedTaskIds, setCollapsedTaskIds] = useState<Record<string, boolean>>({});
@@ -111,6 +113,7 @@ export const AssignmentView: React.FC = () => {
   // Drag-and-drop & Multiple Selection State
   const [draggedColId, setDraggedColId] = useState<string | null>(null);
   const [selectedColIds, setSelectedColIds] = useState<string[]>([]);
+  const [lastSelectedColId, setLastSelectedColId] = useState<string | null>(null);
   
   // Unassigned Pool View & Grouping Mode (18.3)
   const [unassignedGroupBy, setUnassignedGroupBy] = useState<'cargo_categoria' | 'cargo' | 'categoria' | 'geral' | 'skills'>('cargo_categoria');
@@ -512,12 +515,30 @@ export const AssignmentView: React.FC = () => {
     setDraggedColId(null);
   };
 
-  // Selection toggle
+  // Selection toggle with Shift-click range selection
   const toggleSelectCol = (colId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    const isShift = Boolean(e?.shiftKey);
+
+    const refList = unassignedPeople.some((c) => c.id === colId) ? unassignedPeople : presentPeople;
+
+    if (isShift && lastSelectedColId && refList.some((c) => c.id === lastSelectedColId)) {
+      const lastIdx = refList.findIndex((c) => c.id === lastSelectedColId);
+      const currIdx = refList.findIndex((c) => c.id === colId);
+      if (lastIdx !== -1 && currIdx !== -1) {
+        const start = Math.min(lastIdx, currIdx);
+        const end = Math.max(lastIdx, currIdx);
+        const rangeIds = refList.slice(start, end + 1).map((c) => c.id);
+        setSelectedColIds((prev) => Array.from(new Set([...prev, ...rangeIds])));
+        setLastSelectedColId(colId);
+        return;
+      }
+    }
+
     setSelectedColIds((prev) =>
       prev.includes(colId) ? prev.filter((id) => id !== colId) : [...prev, colId]
     );
+    setLastSelectedColId(colId);
   };
 
   const selectAllUnassigned = () => {
@@ -526,23 +547,31 @@ export const AssignmentView: React.FC = () => {
 
   const clearSelection = () => {
     setSelectedColIds([]);
+    setLastSelectedColId(null);
   };
 
   // Open Quick Assignment Popover
-  const handleOpenPopover = (e: React.MouseEvent, colId?: string) => {
-    e.stopPropagation();
+  const handleOpenPopover = (e?: React.MouseEvent, colId?: string) => {
+    if (e) e.stopPropagation();
     const targetIds = colId ? [colId] : selectedColIds;
     if (targetIds.length === 0) return;
 
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const top = Math.min(rect.bottom + 8, window.innerHeight - 380);
-    const left = Math.min(rect.left, window.innerWidth - 320);
+    let top = 100;
+    let left = Math.max(16, (window.innerWidth - 340) / 2);
+
+    if (e?.currentTarget) {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      top = Math.max(16, Math.min(rect.bottom + 8, window.innerHeight - 440));
+      left = Math.max(16, Math.min(rect.left, window.innerWidth - 350));
+    } else {
+      top = Math.max(40, (window.innerHeight - 480) / 2);
+    }
 
     setPopoverState({
       colId,
       colIds: targetIds,
-      top: Math.max(16, top),
-      left: Math.max(16, left),
+      top,
+      left,
     });
   };
 
@@ -1184,12 +1213,8 @@ export const AssignmentView: React.FC = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => {
-                if (window.confirm(t('assignment.clearConfirm'))) {
-                  clearAssignments();
-                  showNotice(t('assignment.clearAll'));
-                }
-              }}
+              onClick={() => setIsClearConfirmOpen(true)}
+              title={t('assignment.clearAll')}
             >
               {t('assignment.clearAll')}
             </Button>
@@ -2130,7 +2155,9 @@ export const AssignmentView: React.FC = () => {
           );
         };
 
-        return (
+        if (typeof document === 'undefined') return null;
+
+        return createPortal(
           <>
             <div
               className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px]"
@@ -2145,8 +2172,8 @@ export const AssignmentView: React.FC = () => {
             <div
               style={{
                 position: 'fixed',
-                top: `${Math.min(popoverState.top, window.innerHeight - 450)}px`,
-                left: `${Math.min(popoverState.left, window.innerWidth - 360)}px`,
+                top: `${Math.max(16, Math.min(popoverState.top, window.innerHeight - 450))}px`,
+                left: `${Math.max(16, Math.min(popoverState.left, window.innerWidth - 360))}px`,
               }}
               className="z-50 w-84 bg-[var(--paper)] border border-[var(--line)] rounded-xl p-3 shadow-[var(--shadow-pop)] space-y-2.5 animate-in fade-in zoom-in-95 duration-150 max-h-[85vh] flex flex-col"
             >
@@ -2282,9 +2309,54 @@ export const AssignmentView: React.FC = () => {
                 )}
               </div>
             </div>
-          </>
+          </>,
+          document.body
         );
       })()}
+
+      {/* Floating Batch Assignment Dock for Selected Collaborators */}
+      {selectedColIds.length > 0 && !popoverState && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-30 bg-[var(--paper)] text-[var(--ink)] border-2 border-[var(--primary-border)] px-3.5 py-2 rounded-2xl shadow-2xl flex items-center gap-2.5 animate-in slide-in-from-bottom-5 duration-200 backdrop-blur-md">
+          <div className="flex items-center gap-2 text-xs font-black text-[var(--primary)] shrink-0">
+            <span className="w-2 h-2 rounded-full bg-[var(--primary)] animate-ping" />
+            <span>{selectedColIds.length} selecionado(s)</span>
+          </div>
+
+          <div className="h-4 w-px bg-[var(--line)]" />
+
+          <button
+            type="button"
+            onClick={(e) => handleOpenPopover(e)}
+            className="px-3 py-1.5 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-white text-xs font-black rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>Alocar em Lote</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              selectedColIds.forEach((id) => unassignTask(id));
+              showNotice(`${selectedColIds.length} colaboradores removidos das tarefas.`);
+              setSelectedColIds([]);
+              setLastSelectedColId(null);
+            }}
+            className="px-2.5 py-1.5 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 hover:bg-rose-100 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+            title="Remover todos os colaboradores selecionados de qualquer tarefa"
+          >
+            Desalocar
+          </button>
+
+          <button
+            type="button"
+            onClick={clearSelection}
+            className="p-1 hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--ink)] rounded-lg transition-colors cursor-pointer"
+            title="Limpar seleção"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* MOVE COLLABORATOR DIRECT MODAL */}
       <Modal
@@ -2371,6 +2443,45 @@ export const AssignmentView: React.FC = () => {
             })}
           </div>
         )}
+      </Modal>
+
+      {/* Confirm Clear All Assignments Modal */}
+      <Modal
+        isOpen={isClearConfirmOpen}
+        onClose={() => setIsClearConfirmOpen(false)}
+        icon={<Trash2 className="w-5 h-5 text-red-500" />}
+        title={t('assignment.clearAll')}
+        subtitle={t('assignment.clearConfirm')}
+        size="sm"
+        footer={
+          <div className="flex items-center justify-end gap-2 w-full">
+            <Button variant="outline" size="sm" onClick={() => setIsClearConfirmOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              icon={Trash2}
+              onClick={() => {
+                clearAssignments();
+                setSelectedColIds([]);
+                setIsClearConfirmOpen(false);
+                showNotice('Todos os postos de trabalho foram desocupados.');
+              }}
+            >
+              {t('assignment.clearAll')}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-3 py-1">
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            Esta ação irá desvincular todos os colaboradores alocados em postos e subdivisões na data ativa.
+          </p>
+          <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-800 dark:text-amber-200 text-xs">
+            <strong>Observação:</strong> Os colaboradores retornarão à lista de disponíveis para alocação. Nenhum cadastro ou histórico será perdido.
+          </div>
+        </div>
       </Modal>
 
       {/* Intelligent Auto Assign Modal */}
@@ -2493,3 +2604,5 @@ const CollaboratorAssignedCard: React.FC<CollaboratorAssignedCardProps> = ({
     </div>
   );
 };
+
+export default AssignmentView;

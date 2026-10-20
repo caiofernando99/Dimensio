@@ -154,6 +154,13 @@ class MediaKeepaliveManager {
     // não considere o elemento como rastreador oculto de 0px
     el.style.cssText = 'position:fixed;bottom:2px;right:2px;width:10px;height:10px;opacity:0.02;pointer-events:none;z-index:-1;';
 
+    try {
+      const savedSinkId = typeof localStorage !== 'undefined' ? localStorage.getItem('dimensio_audio_output_id') : null;
+      if (savedSinkId && 'setSinkId' in el && typeof (el as any).setSinkId === 'function') {
+        (el as any).setSinkId(savedSinkId === 'default' ? '' : savedSinkId).catch(() => {});
+      }
+    } catch {}
+
     document.body.appendChild(el);
     this.audioEl = el;
     return el;
@@ -338,6 +345,19 @@ class MediaKeepaliveManager {
     }
 
     this.requestScreenWakeLock();
+  }
+
+  public async setSinkId(deviceId: string): Promise<boolean> {
+    const el = this.audioEl || this.getOrCreateAudioElement();
+    if (el && 'setSinkId' in el && typeof (el as any).setSinkId === 'function') {
+      try {
+        await (el as any).setSinkId(deviceId === 'default' ? '' : deviceId);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
   }
 
   public getDiagnostics() {

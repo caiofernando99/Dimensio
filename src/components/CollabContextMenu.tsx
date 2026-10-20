@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '../context/AppContext';
 import { useCommunication } from '../context/CommunicationContext';
 import { getCollaboratorStatus } from '../utils/helpers';
-import { navigateTo, focusServiceRequest } from '../utils/navigation';
+import { navigateTo } from '../utils/navigation';
 import { onCollabContextMenu } from '../utils/collabContextMenu';
 import { CollabDetailsModal } from './CollabDetailsModal';
 import type { Collaborator } from '../types';
@@ -10,17 +10,15 @@ import {
   UserRound,
   ClipboardList,
   Clock,
-  History,
   RadioTower,
   ChevronRight,
   Check,
   Radio,
-  MessageSquareText,
 } from 'lucide-react';
 
 const MENU_WIDTH = 268;
 
-type OpenSection = 'task' | 'break' | 'requests' | null;
+type OpenSection = 'task' | 'break' | null;
 
 const CollabContextMenu: React.FC = () => {
   const { state, identifiedUser, assignTask, unassignTask, moveBreakInterval, showNotice } = useApp();
@@ -83,44 +81,6 @@ const CollabContextMenu: React.FC = () => {
   const collabOnline = collab ? onlineCollabIds.has(collab.id) : false;
   const isSelf = collab ? identifiedUser?.collaboratorId === collab.id || identifiedUser?.id === collab.id : false;
 
-  const recentRequests = useMemo(
-    () =>
-      collab
-        ? [
-            ...(state.serviceRequests || [])
-              .filter(
-                (r) =>
-                  r.collaboratorId === collab.id ||
-                  (r.collaboratorName && r.collaboratorName === collab.name) ||
-                  (r.selectedCollaborators || []).includes(collab.name)
-              )
-              .map((r) => ({
-                id: r.id,
-                kind: 'systemic' as const,
-                title: r.title,
-                status: r.status,
-                createdAt: r.createdAt,
-                tag: r.type === 'aviso' ? 'Aviso' : 'Pedido',
-              })),
-            ...(state.supportMessages || [])
-              .filter(
-                (m) => m.senderId === collab.id || (m.senderName && m.senderName === collab.name)
-              )
-              .map((m) => ({
-                id: m.id,
-                kind: 'support' as const,
-                title: m.supportType || m.codeText || 'Chamado de suporte',
-                status: m.status,
-                createdAt: m.createdAt,
-                tag: 'Suporte',
-              })),
-          ]
-            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-            .slice(0, 4)
-        : [],
-    [collab, state.serviceRequests, state.supportMessages]
-  );
-
   // Perfil completo é um estado separado: renderiza o modal mesmo com o menu fechado.
   if (profileCollabId) {
     const profileCollab = state.collaborators.find((c) => c.id === profileCollabId);
@@ -154,12 +114,6 @@ const CollabContextMenu: React.FC = () => {
   const handleOpenDirect = () => {
     if (!collab || radioDisabledReason) return;
     openDirectChannel(collab.id, collab.name);
-  };
-
-  const handleViewRequest = (id: string) => {
-    close();
-    navigateTo('requests');
-    focusServiceRequest(id);
   };
 
   const handleAssign = (taskId: string) => {
@@ -314,42 +268,6 @@ const CollabContextMenu: React.FC = () => {
                   </button>
                 );
               })}
-            </div>
-          )}
-        </div>
-
-        {/* Últimos pedidos */}
-        <div>
-          <button
-            role="menuitem"
-            onClick={() => setSection(section === 'requests' ? null : 'requests')}
-            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-left text-[var(--ink)] hover:bg-[var(--bg)] transition-colors cursor-pointer"
-          >
-            <MessageSquareText className="w-4 h-4 text-amber-500 shrink-0" /> Últimos pedidos
-            <span className="ml-auto text-[9px] font-black uppercase text-[var(--muted)]">{recentRequests.length}</span>
-          </button>
-          {section === 'requests' && (
-            <div className="px-3 pb-2.5 space-y-1.5">
-              {recentRequests.length === 0 ? (
-                <p className="text-[10px] font-semibold text-[var(--muted)] italic">Nenhum pedido vinculado a este colaborador.</p>
-              ) : (
-                recentRequests.map((r) => (
-                  <button
-                    key={r.id}
-                    onClick={() => handleViewRequest(r.id)}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 bg-[var(--bg)] border border-[var(--line)] rounded-lg text-left hover:border-[var(--primary)] transition-colors cursor-pointer"
-                    title="Abrir no suporte"
-                  >
-                    <History className="w-3.5 h-3.5 text-[var(--muted)] shrink-0" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[11px] font-extrabold text-[var(--ink)] truncate">{r.title}</span>
-                      <span className="block text-[9px] font-semibold text-[var(--muted)] uppercase">
-                        {r.tag} • {r.status} • {new Date(r.createdAt).toLocaleDateString('pt-BR')}
-                      </span>
-                    </span>
-                  </button>
-                ))
-              )}
             </div>
           )}
         </div>

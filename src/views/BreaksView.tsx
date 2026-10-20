@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { SearchInput } from '../components/SearchInput';
 import { MultiSelectFilter } from '../components/MultiSelectFilter';
@@ -260,10 +261,31 @@ export const BreaksView: React.FC = () => {
     t.members.some((mId) => filteredPeopleIds.has(mId))
   );
 
-  const toggleSelect = (id: string) => {
+  const [lastSelectedMemberId, setLastSelectedMemberId] = useState<string | null>(null);
+
+  const toggleSelect = (id: string, e?: React.SyntheticEvent) => {
+    const nativeEvent = e?.nativeEvent as MouseEvent | undefined;
+    const isShift = Boolean(nativeEvent?.shiftKey || (e as React.MouseEvent)?.shiftKey);
+
+    const refList = pendingCollaborators.some((c) => c.id === id) ? pendingCollaborators : presentPeople;
+
+    if (isShift && lastSelectedMemberId && refList.some((c) => c.id === lastSelectedMemberId)) {
+      const lastIdx = refList.findIndex((c) => c.id === lastSelectedMemberId);
+      const currIdx = refList.findIndex((c) => c.id === id);
+      if (lastIdx !== -1 && currIdx !== -1) {
+        const start = Math.min(lastIdx, currIdx);
+        const end = Math.max(lastIdx, currIdx);
+        const rangeIds = refList.slice(start, end + 1).map((c) => c.id);
+        setSelectedMemberIds((prev) => Array.from(new Set([...prev, ...rangeIds])));
+        setLastSelectedMemberId(id);
+        return;
+      }
+    }
+
     setSelectedMemberIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
+    setLastSelectedMemberId(id);
   };
 
   // Collaborators still pending a break slot (list view)
@@ -279,9 +301,10 @@ export const BreaksView: React.FC = () => {
     });
     const slotObj = activeBreaks.find((b) => b.id === breakSlotId);
     showNotice(
-      `${selectedMemberIds.length} colaborador(es) dimensionado(s) para ${slotObj ? slotObj.time : 'Intervalos pendentes'}!`
+      `${selectedMemberIds.length} colaborador(es) atribuído(s) para ${slotObj ? slotObj.time : 'Intervalos pendentes'}!`
     );
     setSelectedMemberIds([]);
+    setLastSelectedMemberId(null);
   };
 
   // Standardized Collaborator Card inside Break Slot
@@ -471,8 +494,18 @@ export const BreaksView: React.FC = () => {
                     const { collaboratorId, fromSlotId } = JSON.parse(raw);
                     const toSlotId = slot ? slot.id : null;
                     if (collaboratorId) {
-                      moveBreakInterval(collaboratorId, fromSlotId, toSlotId);
-                      showNotice(`Intervalo atualizado com sucesso!`);
+                      if (selectedMemberIds.includes(collaboratorId) && selectedMemberIds.length > 1) {
+                        selectedMemberIds.forEach((id) => {
+                          const curSlot = getPersonBreakSlot(id);
+                          moveBreakInterval(id, curSlot?.id || null, toSlotId);
+                        });
+                        showNotice(`${selectedMemberIds.length} colaboradores atribuídos para ${slotLabel}!`);
+                        setSelectedMemberIds([]);
+                        setLastSelectedMemberId(null);
+                      } else {
+                        moveBreakInterval(collaboratorId, fromSlotId, toSlotId);
+                        showNotice(`Intervalo atualizado com sucesso!`);
+                      }
                     }
                   }
                 } catch (err) {
@@ -794,8 +827,18 @@ export const BreaksView: React.FC = () => {
                     if (raw) {
                       const { collaboratorId, fromSlotId } = JSON.parse(raw);
                       if (collaboratorId) {
-                        moveBreakInterval(collaboratorId, fromSlotId, b.id);
-                        showNotice(`Colaborador movido para o intervalo das ${b.time}!`);
+                        if (selectedMemberIds.includes(collaboratorId) && selectedMemberIds.length > 1) {
+                          selectedMemberIds.forEach((id) => {
+                            const curSlot = getPersonBreakSlot(id);
+                            moveBreakInterval(id, curSlot?.id || null, b.id);
+                          });
+                          showNotice(`${selectedMemberIds.length} colaboradores movidos para o intervalo das ${b.time}!`);
+                          setSelectedMemberIds([]);
+                          setLastSelectedMemberId(null);
+                        } else {
+                          moveBreakInterval(collaboratorId, fromSlotId, b.id);
+                          showNotice(`Colaborador movido para o intervalo das ${b.time}!`);
+                        }
                       }
                     }
                   } catch (err) {
@@ -1278,12 +1321,16 @@ export const BreaksView: React.FC = () => {
                             : 'bg-[var(--paper)] border-[var(--line)] hover:border-[var(--primary-border)]'
                         }`}
                       >
-                        <div className="flex items-center justify-between gap-2">
+                        <div
+                          className="flex items-center justify-between gap-2 cursor-pointer select-none"
+                          onClick={(e) => toggleSelect(col.id, e)}
+                        >
                           <div className="flex items-center gap-2 min-w-0">
                             <input
                               type="checkbox"
                               checked={isSelected}
-                              onChange={() => toggleSelect(col.id)}
+                              onChange={(e) => toggleSelect(col.id, e)}
+                              onClick={(e) => e.stopPropagation()}
                               className="rounded border-[var(--line)] cursor-pointer"
                             />
                             <Avatar src={col.photoUrl} name={col.name} size="xs" />
@@ -1614,6 +1661,56 @@ export const BreaksView: React.FC = () => {
               </Button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Floating Batch Assignment Dock for Selected Collaborators in Breaks View */}
+      {selectedMemberIds.length > 0 && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-30 bg-[var(--paper)] text-[var(--ink)] border-2 border-[var(--primary-border)] px-4 py-2.5 rounded-2xl shadow-2xl flex flex-wrap items-center gap-2.5 animate-in slide-in-from-bottom-5 duration-200 backdrop-blur-md max-w-[95vw]">
+          <div className="flex items-center gap-2 text-xs font-black text-[var(--primary)] shrink-0">
+            <span className="w-2 h-2 rounded-full bg-[var(--primary)] animate-ping" />
+            <span>{selectedMemberIds.length} selecionado(s)</span>
+          </div>
+
+          <div className="h-4 w-px bg-[var(--line)] hidden sm:block" />
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-bold text-[var(--muted)] shrink-0">Atribuir intervalo:</span>
+            {activeBreaks.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => handleBulkAssignBreak(b.id)}
+                className="px-2.5 py-1 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-white text-xs font-black rounded-lg transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                title={`Atribuir os ${selectedMemberIds.length} colaboradores para ${b.time}`}
+              >
+                <Clock className="w-3 h-3" />
+                <span>{b.time}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => handleBulkAssignBreak(null)}
+              className="px-2.5 py-1 bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 hover:bg-amber-500/20 text-xs font-bold rounded-lg transition-all cursor-pointer"
+              title="Mover os colaboradores selecionados para intervalos pendentes"
+            >
+              Tornar Pendentes
+            </button>
+          </div>
+
+          <div className="h-4 w-px bg-[var(--line)] hidden sm:block" />
+
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedMemberIds([]);
+              setLastSelectedMemberId(null);
+            }}
+            className="p-1.5 text-[var(--muted)] hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer shrink-0 ml-auto"
+            title="Limpar seleção"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
     </div>

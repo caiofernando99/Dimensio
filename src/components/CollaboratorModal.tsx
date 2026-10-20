@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
 import {
   X,
@@ -216,7 +217,9 @@ export const CollaboratorModal: React.FC<CollaboratorModalProps> = ({
     onClose();
   };
 
-  return (
+  if (!isOpen || typeof document === 'undefined') return null;
+
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
       <motion.div
         initial={{ scale: 0.95, opacity: 0 }}
@@ -798,6 +801,7 @@ export const CollaboratorModal: React.FC<CollaboratorModalProps> = ({
           </div>
         </form>
       </motion.div>
-    </div>
+    </div>,
+    document.body
   );
 };

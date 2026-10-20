@@ -32,7 +32,9 @@ export const MultiSelectFilter: React.FC<MultiSelectFilterProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown when clicking outside
+  const [alignRight, setAlignRight] = useState(false);
+
+  // Close dropdown when clicking outside & calculate smart positioning
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
@@ -42,6 +44,18 @@ export const MultiSelectFilter: React.FC<MultiSelectFilterProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (isOpen && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const screenWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
+      if (rect.left + 260 > screenWidth || screenWidth - rect.right < 140) {
+        setAlignRight(true);
+      } else {
+        setAlignRight(false);
+      }
+    }
+  }, [isOpen]);
 
   const isAllSelected = selectedValues.length === options.length && options.length > 0;
 
@@ -67,7 +81,7 @@ export const MultiSelectFilter: React.FC<MultiSelectFilterProps> = ({
   );
 
   return (
-    <div ref={containerRef} className={`relative flex-1 min-w-[140px] ${className}`}>
+    <div ref={containerRef} className={`relative flex-1 min-w-[130px] ${className}`}>
       {label && (
         <label className="block text-[11px] font-extrabold text-[var(--muted)] uppercase tracking-wider mb-1 flex items-center gap-1">
           {icon || <Filter className="w-3 h-3 text-[var(--primary)]" />}
@@ -84,7 +98,7 @@ export const MultiSelectFilter: React.FC<MultiSelectFilterProps> = ({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className={`w-full px-3 py-2 rounded-xl border text-xs font-bold text-left flex items-center justify-between gap-1.5 transition-all cursor-pointer ${
+        className={`w-full px-2.5 py-1.5 rounded-xl border text-xs font-bold text-left flex items-center justify-between gap-1.5 transition-all cursor-pointer ${
           isOpen
             ? 'border-[var(--primary)] bg-[var(--paper)] ring-2 ring-[var(--primary-border)]'
             : selectedValues.length > 0 && selectedValues.length < options.length
@@ -120,7 +134,9 @@ export const MultiSelectFilter: React.FC<MultiSelectFilterProps> = ({
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute z-50 mt-1 w-full min-w-[200px] max-w-[320px] bg-[var(--paper)] border-2 border-[var(--primary-border)] rounded-2xl shadow-xl p-2 space-y-1.5 animate-in fade-in duration-100 left-0">
+        <div className={`absolute z-50 mt-1 w-full min-w-[210px] max-w-[min(320px,calc(100vw-2rem))] bg-[var(--paper)] border-2 border-[var(--primary-border)] rounded-2xl shadow-xl p-2 space-y-1.5 animate-in fade-in duration-100 ${
+          alignRight ? 'right-0' : 'left-0'
+        }`}>
           {options.length > 5 && (
             <input
               type="text"
