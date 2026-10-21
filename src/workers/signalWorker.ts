@@ -28,6 +28,7 @@ interface WorkerConfig {
   channels: string[];
   pollMs: number;
   heartbeatMs: number;
+  relayEnabled?: boolean;
 }
 
 type WorkerInput =
@@ -47,8 +48,15 @@ function genId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function isHtmlResponse(res: Response): boolean {
+  return (res.headers.get('content-type') || '').toLowerCase().includes('text/html');
+}
+
+let backoffUntil = 0;
+
 async function tryPost(targetUrl: string, messages: SignalMessage[]): Promise<boolean> {
   if (!cfg) return false;
+  if (Date.now() < backoffUntil) return false;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
@@ -68,7 +76,11 @@ async function tryPost(targetUrl: string, messages: SignalMessage[]): Promise<bo
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    return res.ok;
+    if (res.status === 429) {
+      backoffUntil = Date.now() + 2500;
+      return false;
+    }
+    return res.ok && !isHtmlResponse(res);
   } catch {
     return false;
   }
@@ -117,9 +129,14 @@ async function tryPoll(targetUrl: string): Promise<{ messages: SignalMessage[]; 
 
     const res = await fetch(u.toString(), { method: 'GET', signal: controller.signal });
     clearTimeout(timeout);
-    if (!res.ok) return { messages: [], peers: [], ok: false };
+    if (res.status === 429) {
+      backoffUntil = Date.now() + 2500;
+      return { messages: [], peers: [], ok: false };
+    }
+    if (!res.ok || isHtmlResponse(res)) return { messages: [], peers: [], ok: false };
 
-    const data = await res.json();
+    const data = await res.json().catch(() => null);
+    if (!data) return { messages: [], peers: [], ok: false };
     lastPollTs = Math.max(0, Date.now() - 1500);
 
     let messages: SignalMessage[] = [];
@@ -149,7 +166,7 @@ async function poll(): Promise<{ messages: SignalMessage[]; peers: any[]; ok: bo
   let result = await tryPoll('/api/signal');
   if ((!result.ok || result.messages.length === 0) && cfg.webhookUrl && cfg.webhookUrl !== '/api/signal' && !cfg.webhookUrl.endsWith('/api/signal')) {
     const fallbackResult = await tryPoll(cfg.webhookUrl);
-    if (fallbackResult.ok && fallbackResult.messages.length > 0) {
+    if (fallbackResult.ok) {
       result = fallbackResult;
     }
   }
@@ -195,6 +212,14 @@ function buildPresence() {
 async function tick() {
   if (!cfg) return;
   const now = Date.now();
+
+  // Firestore fallback mode: keep timers/keepalive alive for the main thread,
+  // but do not touch the unavailable /api/signal relay.
+  if (cfg.relayEnabled === false || now < backoffUntil) {
+    workerSelf.postMessage({ type: 'tick', now });
+    workerSelf.postMessage({ type: 'keepalive-ping', now });
+    return;
+  }
 
   if (now - lastHeartbeat >= cfg.heartbeatMs) {
     lastHeartbeat = now;

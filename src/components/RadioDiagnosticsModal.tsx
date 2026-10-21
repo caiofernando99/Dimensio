@@ -51,9 +51,14 @@ export const RadioDiagnosticsModal: React.FC<RadioDiagnosticsModalProps> = ({ is
 
     // Measure server latency
     const t0 = performance.now();
-    fetch('/api/signal/presence')
+    fetch('/api/signal/presence', { cache: 'no-store' })
       .then((res) => {
-        if (res.ok) setPingMs(Math.round(performance.now() - t0));
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        if (res.ok && contentType.includes('application/json')) {
+          setPingMs(Math.round(performance.now() - t0));
+        } else {
+          setPingMs(null);
+        }
       })
       .catch(() => setPingMs(null));
 
@@ -71,6 +76,7 @@ export const RadioDiagnosticsModal: React.FC<RadioDiagnosticsModalProps> = ({ is
 
   const connections: any[] = diag?.connections || [];
   const totalPeers = diag?.totalPeers || 0;
+  const relayMode: string = diag?.relayMode || 'server';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -120,10 +126,20 @@ export const RadioDiagnosticsModal: React.FC<RadioDiagnosticsModalProps> = ({ is
                 <Server className={`w-3.5 h-3.5 ${relayOnline ? 'text-emerald-500' : 'text-red-500'}`} />
               </div>
               <div className="font-bold text-[var(--ink)]">
-                {relayOnline ? 'SSE Conectado' : 'Desconectado'}
+                {relayOnline
+                  ? relayMode === 'firestore'
+                    ? 'Nuvem (Firestore)'
+                    : relayMode === 'webhook'
+                    ? 'Webhook'
+                    : 'SSE Conectado'
+                  : 'Desconectado'}
               </div>
               <div className="text-[10px] text-[var(--muted)] mt-0.5">
-                {pingMs !== null ? `${pingMs}ms latência` : 'Medindo...'}
+                {relayMode === 'firestore'
+                  ? 'Fallback em nuvem'
+                  : pingMs !== null
+                  ? `${pingMs}ms latência`
+                  : 'Sem relay local'}
               </div>
             </div>
 

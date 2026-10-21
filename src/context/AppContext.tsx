@@ -49,6 +49,14 @@ import { isCalendarOnlyExport, unwrapBackupJson } from '../utils/backupImport';
 import { isPresentStatus } from '../utils/presenceFilters';
 import { getRootTask } from '../utils/taskTreeHelpers';
 import {
+  persistBackupHistory,
+  persistSingleBackup,
+  trimSnapshotsToBudget,
+  MAX_BACKUP_HISTORY_BYTES,
+  MAX_BACKUP_HISTORY_COUNT,
+  isQuotaExceededError,
+} from '../utils/backupStorage';
+import {
   SessionConfig,
   readSessionConfig,
   writeSessionConfig,
@@ -422,6 +430,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // true when a GET/POST reached the server successfully this session (used by the
   // session bootstrap to decide if it is safe to push local data up).
   const lastFetchReachedServer = useRef<boolean>(false);
+  const lastFetchFoundRemote = useRef<boolean>(false);
+  const lastRemoteUpdatedAtMs = useRef<number>(0);
   const warnedRemoteOlder = useRef<boolean>(false);
   const didRunSessionBootstrap = useRef<boolean>(false);
 
@@ -591,10 +601,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [state, setState] = useState<AppState>(() => {
     try {
-      let saved = getAppStorage().getItem(STORAGE_KEY);
-      if (!saved && typeof localStorage !== 'undefined') {
-        saved = localStorage.getItem(STORAGE_KEY);
-      }
+      const saved = getAppStorage().getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (
@@ -992,20 +999,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         state: snapshotState,
       };
 
-      try {
-        getAppStorage().setItem(AUTO_BACKUP_KEY, JSON.stringify(newSnapshot));
-      } catch (e) {
-        console.warn('Storage full for single backup:', e);
-      }
+      const storage = getAppStorage();
+      persistSingleBackup(storage, AUTO_BACKUP_KEY, newSnapshot, [BACKUP_SNAPSHOTS_KEY]);
 
       setBackupHistory((prev) => {
-        const updated = [newSnapshot, ...prev.filter((s) => s.id !== newSnapshot.id)].slice(0, 15);
-        try {
-          getAppStorage().setItem(BACKUP_SNAPSHOTS_KEY, JSON.stringify(updated));
-        } catch (err) {
-          console.warn('Could not save full history to the active storage:', err);
-        }
-        return updated;
+        const merged = [newSnapshot, ...prev.filter((s) => s.id !== newSnapshot.id)];
+        const { snapshots } = persistBackupHistory(storage, BACKUP_SNAPSHOTS_KEY, merged, {
+          maxBytes: MAX_BACKUP_HISTORY_BYTES,
+          maxCount: MAX_BACKUP_HISTORY_COUNT,
+        });
+        return snapshots.length > 0 ? snapshots : trimSnapshotsToBudget(merged);
       });
 
       const info: AutoBackupInfo = {
@@ -1072,14 +1075,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteBackupById = (backupId: string) => {
     setBackupHistory((prev) => {
       const updated = prev.filter((b) => b.id !== backupId);
-      try {
-        getAppStorage().setItem(BACKUP_SNAPSHOTS_KEY, JSON.stringify(updated));
-      } catch {
-        // ignore
-      }
-      return updated;
+      const result = persistBackupHistory(getAppStorage(), BACKUP_SNAPSHOTS_KEY, updated);
+      return result.snapshots;
     });
-    showNotice('Ponto de backup removido do histórico.');
+    showNotice('Ponto de backup removido do hist��rico.');
   };
 
   const clearBackupHistory = () => {
@@ -1261,16 +1260,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     try {
       const jsonStr = JSON.stringify(state);
+      // Grava apenas no armazenamento ativo. Espelhar o estado inteiro no
+      // localStorage em modo sessão consumia a cota e furava a política de
+      // privacidade (dados da equipe sobrevivendo ao fechamento da aba).
       getAppStorage().setItem(STORAGE_KEY, jsonStr);
-      try {
-        localStorage.setItem(STORAGE_KEY, jsonStr);
-      } catch {}
 
       if (liveBcRef.current && !isRemoteOrBroadcastUpdate.current) {
         liveBcRef.current.postMessage({ type: 'STATE_UPDATED', state, senderId: tabId.current });
       }
     } catch (err) {
-      console.error('Failed to save or broadcast state', err);
+      if (isQuotaExceededError(err)) {
+        try {
+          // Backups são descartáveis; o estado operacional não é. Libera espaço
+          // e tenta uma última vez antes de reportar a falha.
+          const storage = getAppStorage();
+          storage.removeItem(BACKUP_SNAPSHOTS_KEY);
+          storage.removeItem(AUTO_BACKUP_KEY);
+          storage.setItem(STORAGE_KEY, JSON.stringify(state));
+          console.warn('Cota esgotada: histórico de backups descartado para preservar o estado atual.');
+        } catch (retryErr) {
+          console.error('Failed to save or broadcast state', retryErr);
+        }
+      } else {
+        console.error('Failed to save or broadcast state', err);
+      }
     }
   }, [state]);
 
@@ -4458,9 +4471,11 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       if (err?.code === 'auth/invalid-credential' || err?.code === 'auth/wrong-password') {
         msg = 'E-mail ou senha incorretos.';
       } else if (err?.code === 'auth/user-not-found') {
-        msg = 'Usuário não encontrado. Verifique o e-mail digitado ou crie uma conta.';
+        msg = 'Usuǭrio nǜo encontrado. Verifique o e-mail digitado ou crie uma conta.';
       } else if (err?.code === 'auth/invalid-email') {
-        msg = 'Formato de e-mail inválido.';
+        msg = 'Formato de e-mail invǭlido.';
+      } else if (err?.code === 'auth/operation-not-allowed') {
+        msg = 'Login por e-mail/senha desativado no Firebase. Ative o provedor "Email/Password" no Console do Firebase > Authentication > Sign-in method e tente novamente.';
       }
       return { success: false, message: msg };
     } finally {
@@ -4496,9 +4511,11 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       console.error('Email sign up error:', err);
       let msg = err?.message || 'Falha ao cadastrar usuário.';
       if (err?.code === 'auth/email-already-in-use') {
-        msg = 'Este e-mail já está cadastrado. Faça login ou recupere sua senha.';
+        msg = 'Este e-mail jǭ estǭ cadastrado. Fa��a login ou recupere sua senha.';
       } else if (err?.code === 'auth/weak-password') {
-        msg = 'A senha deve ter no mínimo 6 caracteres.';
+        msg = 'A senha deve ter no m��nimo 6 caracteres.';
+      } else if (err?.code === 'auth/operation-not-allowed') {
+        msg = 'Cadastro por e-mail/senha desativado no Firebase. Ative o provedor "Email/Password" no Console do Firebase > Authentication > Sign-in method e tente novamente.';
       }
       return { success: false, message: msg };
     } finally {
@@ -6412,6 +6429,8 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
 
         consecutiveFailuresRef.current = 0;
         lastFetchReachedServer.current = true;
+        lastFetchFoundRemote.current = Boolean(remoteData);
+        lastRemoteUpdatedAtMs.current = remoteUpdatedAtMs;
         setCloudOnline(true);
 
         const currentState = stateRef.current || state;
@@ -6428,6 +6447,10 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
 
         const normalizedRemote = normalizeAppState(remoteData, currentState);
         const localUpdatedAtMs = Number(currentState.updatedAtMs) || 0;
+        const isFirstCloudPull =
+          lastSyncedTimestampMs.current === 0 &&
+          (currentState.collaborators || []).length === 0 &&
+          (currentState.tasks || []).length === 0;
 
         const remoteDeletedIds = Array.isArray(normalizedRemote.deletedNotificationIds) ? normalizedRemote.deletedNotificationIds : [];
         const localDeletedIds = Array.isArray(currentState.deletedNotificationIds) ? currentState.deletedNotificationIds : [];
@@ -6450,9 +6473,10 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
           alertForNewRemoteNotifications(activeRemoteNotifs, prevLocalNotifIds);
         }
 
-        if (force || (remoteUpdatedAtMs > 0 && remoteUpdatedAtMs > localUpdatedAtMs)) {
-          applyRemoteToLocal(normalizedRemote, remoteUpdatedAtMs, { allowOlder: force });
+        if (force || isFirstCloudPull || (remoteUpdatedAtMs > 0 && remoteUpdatedAtMs > localUpdatedAtMs)) {
+          applyRemoteToLocal(normalizedRemote, remoteUpdatedAtMs, { allowOlder: force || isFirstCloudPull });
           lastSyncedTimestampMs.current = remoteUpdatedAtMs;
+          try { localStorage.setItem(LAST_SYNCED_TIMESTAMP_KEY, String(remoteUpdatedAtMs)); } catch {}
           if (!isSilent) {
             showNotice('Dados sincronizados com o Firestore!', undefined, undefined, 'sync');
           }
@@ -7414,9 +7438,17 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
 
         // State reconciliation
         const timeSinceLastEdit = Date.now() - lastLocalEditTime.current;
-        if (timeSinceLastEdit >= 2000 && remoteUpdatedAtMs > 0 && remoteUpdatedAtMs > localUpdatedAtMs && remoteUpdatedAtMs > lastSyncedTimestampMs.current) {
-          applyRemoteToLocal(normalizedRemote, remoteUpdatedAtMs, { skipSafetyBackup: true });
+        const isFirstCloudPull =
+          lastSyncedTimestampMs.current === 0 &&
+          (currentState.collaborators || []).length === 0 &&
+          (currentState.tasks || []).length === 0;
+        if (
+          isFirstCloudPull ||
+          (timeSinceLastEdit >= 2000 && remoteUpdatedAtMs > 0 && remoteUpdatedAtMs > localUpdatedAtMs && remoteUpdatedAtMs > lastSyncedTimestampMs.current)
+        ) {
+          applyRemoteToLocal(normalizedRemote, remoteUpdatedAtMs, { skipSafetyBackup: true, allowOlder: isFirstCloudPull });
           lastSyncedTimestampMs.current = remoteUpdatedAtMs;
+          try { localStorage.setItem(LAST_SYNCED_TIMESTAMP_KEY, String(remoteUpdatedAtMs)); } catch {}
         }
       },
       (err) => {
@@ -7547,23 +7579,32 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
   useEffect(() => {
     if (didRunSessionBootstrap.current) return;
     const cfg = stateRef.current?.onlineSpreadsheet;
-    if (!cfg || !cfg.webhookUrl || cfg.autoSyncEnabled === false) return;
+    const isFirestore = cfg?.databaseProvider === 'firestore';
+    const isWebhook = Boolean(cfg?.webhookUrl);
+    if (!cfg || cfg.autoSyncEnabled === false || (!isFirestore && !isWebhook)) return;
+    if (isFirestore && isAuthLoading) return;
 
     const t = setTimeout(async () => {
-      if (isConnectingRef.current) return;
+      if (didRunSessionBootstrap.current || isConnectingRef.current) return;
       didRunSessionBootstrap.current = true;
+      const hadLocalData = (stateRef.current?.collaborators || []).length > 0;
       try {
         await fetchFromOnlineSpreadsheetRef.current?.(true);
         const s = stateRef.current;
         const canPush =
           lastSyncedTimestampMs.current > 0 || lastFetchReachedServer.current;
-        if (
+        const localUpdatedAtMs = Number(s?.updatedAtMs) || 0;
+        const remoteIsStale =
+          !lastFetchFoundRemote.current ||
+          localUpdatedAtMs > lastRemoteUpdatedAtMs.current;
+        const shouldPush =
           canPush &&
+          (isWebhook || (hadLocalData && remoteIsStale)) &&
           s &&
           Array.isArray(s.collaborators) &&
           s.collaborators.length > 0 &&
-          !isConnectingRef.current
-        ) {
+          !isConnectingRef.current;
+        if (shouldPush) {
           await syncToOnlineSpreadsheetRef.current?.(true);
         }
       } catch {
@@ -7571,7 +7612,11 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       }
     }, 1500);
     return () => clearTimeout(t);
-  }, []);
+  }, [
+    state.onlineSpreadsheet?.databaseProvider,
+    state.onlineSpreadsheet?.autoSyncEnabled,
+    isAuthLoading,
+  ]);
 
   const addSupportMessage = (msg: {
     codeText?: string;

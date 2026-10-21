@@ -124,7 +124,7 @@ export async function triggerRadioBackgroundSync(tag = 'radio-sync-pending'): Pr
         sync: { register: (tag: string) => Promise<void> };
       };
       await syncReg.sync.register(tag);
-      console.log(`[Background Sync] Tarefa "${tag}" registrada com sucesso.`);
+      console.debug(`[Background Sync] Tarefa "${tag}" registrada.`);
       return true;
     }
   } catch (err) {

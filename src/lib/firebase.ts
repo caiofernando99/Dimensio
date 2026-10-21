@@ -26,23 +26,14 @@ export const db: Firestore = (firebaseConfig as any).firestoreDatabaseId
 export const auth: Auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
-// Google Workspace Scopes
+// Google Workspace Scopes (Calendar e Tasks apenas).
+// Slides, Sheets e Forms foram removidos para reduzir o escopo OAuth.
 export const WORKSPACE_SCOPES = [
   'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/tasks',
   'https://www.googleapis.com/auth/tasks.readonly',
-  'https://www.googleapis.com/auth/drive',
-  'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/drive.readonly',
-  'https://www.googleapis.com/auth/presentations',
-  'https://www.googleapis.com/auth/presentations.readonly',
-  'https://www.googleapis.com/auth/spreadsheets',
-  'https://www.googleapis.com/auth/spreadsheets.readonly',
-  'https://www.googleapis.com/auth/forms.body',
-  'https://www.googleapis.com/auth/forms.body.readonly',
-  'https://www.googleapis.com/auth/forms.responses.readonly',
 ];
 
 WORKSPACE_SCOPES.forEach((scope) => {

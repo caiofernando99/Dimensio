@@ -12,8 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      checks: write
-      pull-requests: write
     steps:
       - name: 🛎️ Checkout do repositório
         uses: actions/checkout@v4
@@ -32,10 +30,42 @@ jobs:
         env:
           NODE_ENV: production
 
-      - name: 🚀 Deploy para o Firebase Hosting
+      - name: 🔍 Checar credenciais do Firebase
+        id: check_credentials
+        run: |
+          if [ -n "${{ secrets.FIREBASE_SERVICE_ACCOUNT || secrets.FIREBASE_SERVICE_ACCOUNT_DEPENDABLE_CAMPAIGN_WXHGQ }}" ]; then
+            echo "auth_mode=service_account" >> $GITHUB_OUTPUT
+          elif [ -n "${{ secrets.FIREBASE_TOKEN }}" ]; then
+            echo "auth_mode=token" >> $GITHUB_OUTPUT
+          else
+            echo "auth_mode=missing" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🚀 Deploy via Firebase Service Account
+        if: steps.check_credentials.outputs.auth_mode == 'service_account'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT || secrets.FIREBASE_SERVICE_ACCOUNT_DEPENDABLE_CAMPAIGN_WXHGQ }}
           channelId: live
           projectId: dependable-campaign-wxhgq
+
+      - name: 🚀 Deploy via Firebase CLI Token
+        if: steps.check_credentials.outputs.auth_mode == 'token'
+        run: npx firebase-tools deploy --only hosting --project dependable-campaign-wxhgq --token "${{ secrets.FIREBASE_TOKEN }}"
+
+      - name: ⚠️ Instruções de Configuração (caso falte credencial)
+        if: steps.check_credentials.outputs.auth_mode == 'missing'
+        run: |
+          echo "=========================================================="
+          echo "⚠️ CREDENCIAL DO FIREBASE NÃO ENCONTRADA NO GITHUB SECRETS"
+          echo "=========================================================="
+          echo "Para que o deploy automático no Firebase funcione com sucesso:"
+          echo "1. Acesse o Console do Firebase: https://console.firebase.google.com/project/dependable-campaign-wxhgq/settings/serviceaccounts/adminsdk"
+          echo "2. Clique no botão 'Gerar nova chave privada' (baixa um arquivo JSON)"
+          echo "3. No seu repositório GitHub, vá em: Settings > Secrets and variables > Actions"
+          echo "4. Clique em 'New repository secret' com o nome: FIREBASE_SERVICE_ACCOUNT"
+          echo "5. Cole todo o conteúdo do arquivo JSON baixado e salve"
+          echo "6. Feito isso, o GitHub Actions conseguirá implantar seu app com sucesso!"
+          echo "=========================================================="
+          exit 1

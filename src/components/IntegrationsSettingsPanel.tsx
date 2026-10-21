@@ -498,7 +498,7 @@ export const IntegrationsSettingsPanel: React.FC<IntegrationsSettingsPanelProps>
           }`}
         >
           <Sparkles className="w-4 h-4" />
-          <span>Google Workspace & Cloud SQL</span>
+          <span>Google Calendar, Tasks & Cloud SQL</span>
         </button>
 
         <button

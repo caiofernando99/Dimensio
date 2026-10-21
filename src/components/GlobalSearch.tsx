@@ -55,6 +55,44 @@ import { GlobalSearchBatchRequestModal } from './search/GlobalSearchBatchRequest
 import { getAllTaskIdsInFamily, getRootTask, getDirectSubtasks } from '../utils/taskTreeHelpers';
 import { parseSmartSearchAction, type ParsedSmartAction } from '../utils/smartSearchEngine';
 
+/**
+ * Remove do texto os tokens que já foram interpretados pelo filtro inteligente
+ * (turma/turno/status/TL/contexto pessoal). Sem isso, buscar "turma b presentes"
+ * exigia que a MESMA pessoa tivesse "presentes" no nome e o resultado ficava
+ * vazio, embora o card dissesse que o filtro estava ativo.
+ */
+function stripIntentTokens(raw: string): string {
+  return raw
+    .replace(/\b(?:turma|grupo|escala|turmas|grupos)\s*[abcd]\b/gi, ' ')
+    .replace(/\b[abcd]\s*(?:turma|grupo|escala)\b/gi, ' ')
+    .replace(/\b(?:turno|turnos|shift)\s*(?:t?[1-5]|noite|manha|tarde|geral)\b/gi, ' ')
+    .replace(/\bt[1-5]\b/gi, ' ')
+    .replace(/\b(?:presentes?|atrasos?|atrasados?|folgas?|ferias|férias|atestados?|ausentes?|faltas?)\b/gi, ' ')
+    .replace(/\b(?:eu|meu|meus|minha|minhas|comigo)\b/gi, ' ')
+    .replace(/\b(?:tl|lider|líder|time|equipe)\s+[a-zà-ÿ]+\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Aplica os filtros estruturais detectados (turma, turno e TL). */
+function collaboratorMatchesStructuralIntent(
+  collaborator: Collaborator,
+  intent: ContextualSearchIntent,
+  defaultTeamLeader?: string
+): boolean {
+  if (intent.detectedScale) {
+    if ((collaborator.scale || '').toUpperCase() !== intent.detectedScale) return false;
+  }
+  if (intent.detectedShift) {
+    if ((collaborator.shift || '').toUpperCase() !== intent.detectedShift) return false;
+  }
+  if (intent.detectedTL) {
+    const leader = (collaborator.teamLeader || defaultTeamLeader || '').toLowerCase();
+    if (!leader.includes(intent.detectedTL.toLowerCase())) return false;
+  }
+  return true;
+}
+
 export const GlobalSearch: React.FC = () => {
   const appContext = useApp();
   const {
@@ -689,17 +727,39 @@ export const GlobalSearch: React.FC = () => {
   }, [q, identifiedCollaborator]);
 
   const results = useMemo(() => {
+    const collaboratorsById = new Map(state.collaborators.map((c) => [c.id, c]));
+    const textQ = stripIntentTokens(q);
+    const itemQ = textQ || q;
+    const hasStructuralIntent = Boolean(
+      searchIntent.detectedScale || searchIntent.detectedShift || searchIntent.detectedStatus || searchIntent.detectedTL
+    );
+    const effectiveShift = searchIntent.detectedShift || activeShiftFilter;
+    const shiftFilterActive =
+      effectiveShift !== 'ALL' && effectiveShift !== 'todos' && effectiveShift !== 'Geral';
+
     const collabResults: CollabResult[] = state.collaborators
       .filter((c) => {
-        if (!q && activeShiftFilter !== 'ALL' && activeShiftFilter !== 'todos' && activeShiftFilter !== 'Geral') {
+        if (!q && shiftFilterActive) {
           if (c.shift && c.shift !== 'Geral' && c.shift !== 'Todos' && c.shift !== activeShiftFilter) {
             return false;
           }
         }
-        // Match collaborator based on standard and contextual search
-        return matchesCollaboratorSearch(c, q, {
+        // O termo textual já não contém turma/turno/status; quando ele fica vazio,
+        // o filtro inteligente (estrutural) é quem restringe os resultados.
+        if (textQ && !matchesCollaboratorSearch(c, textQ, {
           defaultTeamLeader: state.defaultTeamLeader,
-        });
+        })) {
+          return false;
+        }
+        if (!textQ && searchIntent.isPersonalScope && !hasStructuralIntent) {
+          return Boolean(identifiedUser && c.id === identifiedUser.id);
+        }
+        if (!textQ && !hasStructuralIntent && !matchesCollaboratorSearch(c, q, {
+          defaultTeamLeader: state.defaultTeamLeader,
+        })) {
+          return false;
+        }
+        return collaboratorMatchesStructuralIntent(c, searchIntent, state.defaultTeamLeader);
       })
       .map((c) => {
         const stInfo = getCollaboratorStatus(c, activeDate, state);
@@ -714,6 +774,7 @@ export const GlobalSearch: React.FC = () => {
           isExtraPresence: stInfo.isExtraPresence,
         };
       })
+      .filter((item) => !searchIntent.detectedStatus || item.status === searchIntent.detectedStatus)
       .sort((a, b) => {
         // If personal scope, prioritize identified user at top
         if (identifiedUser) {
@@ -722,10 +783,10 @@ export const GlobalSearch: React.FC = () => {
         }
         // Relevância: nome próprio antes de time/líder (ex: "matheus"
         // mostra os Matheus antes dos liderados por um Matheus)
-        if (q.trim()) {
+        if (textQ) {
           const scoreDiff =
-            scoreCollaboratorSearch(b.collab, q, { defaultTeamLeader: state.defaultTeamLeader }) -
-            scoreCollaboratorSearch(a.collab, q, { defaultTeamLeader: state.defaultTeamLeader });
+            scoreCollaboratorSearch(b.collab, textQ, { defaultTeamLeader: state.defaultTeamLeader }) -
+            scoreCollaboratorSearch(a.collab, textQ, { defaultTeamLeader: state.defaultTeamLeader });
           if (scoreDiff !== 0) return scoreDiff;
         }
         return compareStringsBR(a.collab.name, b.collab.name);
@@ -734,15 +795,30 @@ export const GlobalSearch: React.FC = () => {
     const taskResults: TaskResult[] = state.tasks
       .filter((t) => {
         if (t.active === false) return false;
-        // Direct name search
-        if (matchesSearch(t.name, q)) return true;
-        // Contextual: if search matches a scale (e.g. "turma B"), include tasks that have Turma B members
+        // Busca textual já sem os tokens de intenção (turma/turno/status).
+        if (textQ && matchesSearch(t.name, textQ)) return true;
+        // Contextual: "turma B" inclui tarefas com membros da Turma B.
         if (searchIntent.detectedScale) {
           const hasScaleMember = (t.members || []).some((mId) => {
-            const m = state.collaborators.find((c) => c.id === mId);
+            const m = collaboratorsById.get(mId);
             return m && m.scale?.toUpperCase() === searchIntent.detectedScale?.toUpperCase();
           });
           if (hasScaleMember) return true;
+        }
+        // Contextual: "turno T2" inclui tarefas com membros do turno.
+        if (searchIntent.detectedShift) {
+          const hasShiftMember = (t.members || []).some(
+            (mId) => collaboratorsById.get(mId)?.shift?.toUpperCase() === searchIntent.detectedShift?.toUpperCase()
+          );
+          if (hasShiftMember) return true;
+        }
+        // Contextual: status (presentes, férias etc.) inclui tarefas com membros naquele status.
+        if (searchIntent.detectedStatus) {
+          const hasStatusMember = (t.members || []).some((mId) => {
+            const m = collaboratorsById.get(mId);
+            return m && getCollaboratorStatus(m, activeDate, state).status === searchIntent.detectedStatus;
+          });
+          if (hasStatusMember) return true;
         }
         // Contextual: if search is personal, include tasks where identified user is member
         if (searchIntent.isPersonalScope && identifiedUser && (t.members || []).includes(identifiedUser.id)) {
@@ -767,7 +843,7 @@ export const GlobalSearch: React.FC = () => {
         familyTasks.forEach((ft) => {
           const viaSubtask = ft.id !== t.id;
           (ft.members || []).forEach((id) => {
-            const c = state.collaborators.find((col) => col.id === id);
+            const c = collaboratorsById.get(id);
             if (!c) return;
             membersMap.set(id, {
               collab: c,
@@ -787,22 +863,36 @@ export const GlobalSearch: React.FC = () => {
           hasSubtasks,
           subtaskCount: directSubtasks.length,
         };
+      })
+      .filter((tr) => {
+        if (!hasStructuralIntent) return true;
+        return tr.members.some(
+          (m) =>
+            collaboratorMatchesStructuralIntent(m.collab, searchIntent, state.defaultTeamLeader) &&
+            (!searchIntent.detectedStatus || m.status === searchIntent.detectedStatus)
+        );
       });
 
     const skillSet = new Set<string>();
-    state.skills.forEach((s) => {
-      if (matchesSearch(s, q)) skillSet.add(s);
-    });
-    state.collaborators.forEach((c) => {
-      Object.keys(c.skills || {}).forEach((s) => {
-        if (matchesSearch(s, q)) skillSet.add(s);
+    if (textQ) {
+      state.skills.forEach((s) => {
+        if (matchesSearch(s, textQ)) skillSet.add(s);
       });
-    });
+      state.collaborators.forEach((c) => {
+        Object.keys(c.skills || {}).forEach((s) => {
+          if (matchesSearch(s, textQ)) skillSet.add(s);
+        });
+      });
+    }
     const matchedSkills = [...skillSet];
 
     const skillCollabs: SkillCollabResult[] = matchedSkills.length
       ? state.collaborators
-          .filter((c) => matchedSkills.some((s) => (c.skills?.[s] || 0) > 0))
+          .filter(
+            (c) =>
+              matchedSkills.some((s) => (c.skills?.[s] || 0) > 0) &&
+              collaboratorMatchesStructuralIntent(c, searchIntent, state.defaultTeamLeader)
+          )
           .map((c) => ({
             collab: c,
             status: getCollaboratorStatus(c, activeDate, state).status,
@@ -812,103 +902,81 @@ export const GlobalSearch: React.FC = () => {
           }))
       : [];
 
-    const matchedRoles = state.roles.filter((r) => matchesSearch(r, q));
-    const matchedCategories = state.categories.filter((c) => matchesSearch(c, q));
-    const matchedTLs = state.teamLeaders.filter((tl) => matchesSearch(tl, q));
-    const matchedShifts = availableShifts.filter((s) => matchesSearch(s, q));
+    const matchedRoles = state.roles.filter((r) => matchesSearch(r, itemQ));
+    const matchedCategories = state.categories.filter((c) => matchesSearch(c, itemQ));
+    const matchedTLs = state.teamLeaders.filter((tl) => matchesSearch(tl, itemQ));
+    const matchedShifts = availableShifts.filter((s) => matchesSearch(s, itemQ));
 
     const groupCollabs = state.collaborators.filter((c) => {
       const tl = c.teamLeader || state.defaultTeamLeader || 'Sem Time';
       return (
-        matchedRoles.includes(c.role) ||
-        matchedCategories.includes(c.category) ||
-        matchedTLs.includes(tl) ||
-        matchedShifts.includes(c.shift || 'Geral')
+        (matchedRoles.includes(c.role) ||
+          matchedCategories.includes(c.category) ||
+          matchedTLs.includes(tl) ||
+          matchedShifts.includes(c.shift || 'Geral')) &&
+        collaboratorMatchesStructuralIntent(c, searchIntent, state.defaultTeamLeader)
       );
     });
 
-    const matchedAbsenceTypes = ABSENCE_TERMS.filter((a) => matchesSearch(a.term, q));
+    const matchedAbsenceTypes = ABSENCE_TERMS.filter((a) => matchesSearch(a.term, itemQ));
     const absenceCollabs = matchedAbsenceTypes.length
-      ? state.collaborators.filter((c) =>
-          matchedAbsenceTypes.some((a) => getCollaboratorStatus(c, activeDate, state).status === a.status)
+      ? state.collaborators.filter(
+          (c) =>
+            matchedAbsenceTypes.some((a) => getCollaboratorStatus(c, activeDate, state).status === a.status) &&
+            collaboratorMatchesStructuralIntent(c, searchIntent, state.defaultTeamLeader)
         )
       : [];
 
     // Central de Informações & Hub Search
-    const matchedInfoHubLinks = (state.infoHubLinks || []).filter((l) => {
-      if (activeShiftFilter !== 'ALL' && activeShiftFilter !== 'todos' && activeShiftFilter !== 'Geral') {
-        const itemShift = l.shift || 'Todos';
-        if (itemShift !== 'Todos' && itemShift !== 'Geral' && itemShift !== activeShiftFilter) return false;
-      }
-      return (
-        matchesSearch(l.title, q) ||
-        matchesSearch(l.category || '', q) ||
-        matchesSearch(l.description || '', q) ||
-        matchesSearch(l.url || '', q)
-      );
-    });
+    const matchesHubShift = (itemShift?: string) => {
+      if (!shiftFilterActive) return true;
+      const shift = itemShift || 'Todos';
+      return shift === 'Todos' || shift === 'Geral' || shift === effectiveShift;
+    };
+    const matchesHubText = (...values: Array<string | undefined>) =>
+      values.some((value) => matchesSearch(value || '', itemQ));
 
-    const matchedInfoHubQuickFills = (state.infoHubQuickFills || []).filter((qf) => {
-      if (activeShiftFilter !== 'ALL' && activeShiftFilter !== 'todos' && activeShiftFilter !== 'Geral') {
-        const itemShift = qf.shift || 'Todos';
-        if (itemShift !== 'Todos' && itemShift !== 'Geral' && itemShift !== activeShiftFilter) return false;
-      }
-      return (
-        matchesSearch(qf.title, q) ||
-        matchesSearch(qf.category || '', q) ||
-        matchesSearch(qf.description || '', q) ||
-        (qf.tags || []).some((t) => matchesSearch(t, q)) ||
-        (qf.items || []).some(
-          (sub) => matchesSearch(sub.label, q) || matchesSearch(sub.codeValue, q)
-        )
-      );
-    });
+    const matchedInfoHubLinks = (state.infoHubLinks || []).filter(
+      (l) => matchesHubShift(l.shift) && matchesHubText(l.title, l.category, l.description, l.url)
+    );
 
-    const matchedInfoHubReminders = (state.infoHubReminders || []).filter((r) => {
-      if (activeShiftFilter !== 'ALL' && activeShiftFilter !== 'todos' && activeShiftFilter !== 'Geral') {
-        const itemShift = r.shift || 'Todos';
-        if (itemShift !== 'Todos' && itemShift !== 'Geral' && itemShift !== activeShiftFilter) return false;
-      }
-      return (
-        matchesSearch(r.text, q) ||
-        matchesSearch(r.shift || '', q) ||
-        matchesSearch(r.authorName || '', q)
-      );
-    });
+    const matchedInfoHubQuickFills = (state.infoHubQuickFills || []).filter(
+      (qf) =>
+        matchesHubShift(qf.shift) &&
+        (matchesHubText(qf.title, qf.category, qf.description) ||
+          (qf.tags || []).some((t) => matchesSearch(t, itemQ)) ||
+          (qf.items || []).some(
+            (sub) => matchesSearch(sub.label, itemQ) || matchesSearch(sub.codeValue, itemQ)
+          ))
+    );
 
-    const matchedProcessKnowledge = (state.processKnowledgeList || []).filter((p) => {
-      if (activeShiftFilter !== 'ALL' && activeShiftFilter !== 'todos' && activeShiftFilter !== 'Geral') {
-        const itemShift = p.shift || 'Todos';
-        if (itemShift !== 'Todos' && itemShift !== 'Geral' && itemShift !== activeShiftFilter) return false;
-      }
-      return (
-        matchesSearch(p.title, q) ||
-        matchesSearch(p.category || '', q) ||
-        matchesSearch(p.description || '', q) ||
-        (p.keyTakeaways || []).some((kt) => matchesSearch(kt, q))
-      );
-    });
+    const matchedInfoHubReminders = (state.infoHubReminders || []).filter(
+      (r) => matchesHubShift(r.shift) && matchesHubText(r.text, r.shift, r.authorName)
+    );
+
+    const matchedProcessKnowledge = (state.processKnowledgeList || []).filter(
+      (p) =>
+        matchesHubShift(p.shift) &&
+        (matchesHubText(p.title, p.category, p.description) ||
+          (p.keyTakeaways || []).some((kt) => matchesSearch(kt, itemQ)))
+    );
 
     const matchedServiceRequests = (state.serviceRequests || []).filter((sr) => {
-      if (activeShiftFilter !== 'ALL' && activeShiftFilter !== 'todos' && activeShiftFilter !== 'Geral') {
+      if (shiftFilterActive) {
         const itemShift = sr.shift || 'T2';
+        const audience = sr.targetShiftAudience;
         if (
-          itemShift !== activeShiftFilter &&
+          itemShift !== effectiveShift &&
           itemShift !== 'Todos' &&
           itemShift !== 'Geral' &&
-          sr.targetShiftAudience !== 'todos' &&
-          sr.targetShiftAudience !== 'proximos' &&
-          sr.targetShiftAudience !== 'proximo'
+          audience !== 'todos' &&
+          audience !== 'proximos' &&
+          audience !== 'proximo'
         ) {
           return false;
         }
       }
-      return (
-        matchesSearch(sr.title, q) ||
-        matchesSearch(sr.description || '', q) ||
-        matchesSearch(sr.requesterName || '', q) ||
-        matchesSearch(sr.collaboratorName || '', q)
-      );
+      return matchesHubText(sr.title, sr.description, sr.requesterName, sr.collaboratorName);
     });
 
     return {
@@ -929,7 +997,7 @@ export const GlobalSearch: React.FC = () => {
       matchedProcessKnowledge,
       matchedServiceRequests,
     };
-  }, [state, q, activeDate, dayIntervals, availableShifts.join(',')]);
+  }, [state, q, activeDate, dayIntervals, activeShiftFilter, searchIntent, identifiedUser?.id]);
 
   const filteredCollabResults = collabResultsFiltered(results.collabResults, statusFilter);
   const filteredGroupCollabs = collabResultsFiltered(
@@ -975,6 +1043,9 @@ export const GlobalSearch: React.FC = () => {
     }))
     .filter((tr) => tr.members.length > 0);
 
+  const hasBaseCollabSections =
+    results.collabResults.length > 0 || results.groupCollabs.length > 0 || results.absenceCollabs.length > 0;
+
   const hasCollabSections =
     filteredCollabResults.length > 0 || filteredGroupCollabs.length > 0 || filteredAbsenceCollabs.length > 0;
 
@@ -985,8 +1056,17 @@ export const GlobalSearch: React.FC = () => {
     results.matchedProcessKnowledge.length > 0 ||
     results.matchedServiceRequests.length > 0;
 
+  // A disponibilidade dos filtros e a renderização da área de resultados usam os
+  // resultados-base. Se usassem os filtrados, os próprios filtros desapareceriam
+  // ao chegar em zero resultados, deixando o usuário preso.
   const hasAnyResults =
-    hasCollabSections || filteredSkillCollabs.length > 0 || filteredTasks.length > 0 || hasInfoHubResults;
+    hasBaseCollabSections ||
+    results.skillCollabs.length > 0 ||
+    results.taskResults.length > 0 ||
+    hasInfoHubResults;
+
+  const hasFilteredSectionResults =
+    hasCollabSections || filteredSkillCollabs.length > 0 || filteredTasks.length > 0;
 
   const anyFilterActive = statusFilter !== 'all' || levelFilter !== 'all' || breakFilter !== 'all';
 
@@ -2186,7 +2266,7 @@ export const GlobalSearch: React.FC = () => {
               {/* Filtros contextuais (sticky para sempre acessíveis) */}
               <div className="sticky top-0 z-10 bg-[var(--paper)] border border-[var(--line)] rounded-xl p-2.5 flex flex-wrap items-center gap-2">
                 <span className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Filtros</span>
-                {hasCollabSections && (
+                {hasBaseCollabSections && (
                   <div className="flex flex-wrap items-center gap-1.5">
                     {STATUS_ORDER.map((st) => (
                       <button
@@ -2203,7 +2283,7 @@ export const GlobalSearch: React.FC = () => {
                     ))}
                   </div>
                 )}
-                {filteredSkillCollabs.length > 0 && (
+                {results.skillCollabs.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5">
                     {['all', 1, 2, 3].map((lvl) => (
                       <button
@@ -2220,7 +2300,7 @@ export const GlobalSearch: React.FC = () => {
                     ))}
                   </div>
                 )}
-                {filteredTasks.length > 0 && (
+                {results.taskResults.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5">
                     <button
                       onClick={() => setBreakFilter(breakFilter === 'all' ? 'with' : 'all')}
@@ -2254,6 +2334,20 @@ export const GlobalSearch: React.FC = () => {
                   </button>
                 )}
               </div>
+
+              {anyFilterActive && !hasFilteredSectionResults && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                  <span className="font-semibold">Nenhum colaborador ou tarefa corresponde aos filtros atuais.</span>
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="inline-flex items-center gap-1 rounded-full border border-amber-400 px-2.5 py-1 text-[10px] font-black hover:bg-amber-100 dark:hover:bg-amber-900/50"
+                  >
+                    <FilterX className="w-3 h-3" />
+                    Limpar filtros
+                  </button>
+                </div>
+              )}
 
               {/* Card de Busca Contextual Inteligente */}
               {searchIntent.summaryLabel && (

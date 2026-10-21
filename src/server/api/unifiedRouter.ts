@@ -329,7 +329,7 @@ export function checkSignalRate(req: Request): boolean {
   const clientId = peer ? `${ip}:${peer}` : ip;
   const now = Date.now();
   const last = signalPollClients.get(clientId) || 0;
-  if (now - last < 80) {
+  if (now - last < 40) {
     return false;
   }
   signalPollClients.set(clientId, now);
@@ -1811,9 +1811,8 @@ unifiedApiRouter.delete('/signal/presence', (req: Request, res: Response) => {
 
 unifiedApiRouter.get('/signal', (req: Request, res: Response) => {
   if (!checkSignalRate(req)) {
-    res.setHeader('Retry-After', '1');
     res.setHeader('Cache-Control', 'no-store');
-    return res.status(429).json({ error: 'Polling muito frequente. Use intervalo >= 2.5s.', maxSeq: globalSignalSeq, messages: [] });
+    return res.json({ messages: [], peers: Array.from(radioPresenceStore.values()), maxSeq: globalSignalSeq, count: 0, seq: globalSignalSeq });
   }
   cleanupSignals();
   const peerId = (req.query.peerId as string) || '';

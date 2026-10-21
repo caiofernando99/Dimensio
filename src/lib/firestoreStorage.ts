@@ -3,6 +3,7 @@ import {
   setDoc,
   getDoc,
   getDocs,
+  addDoc,
   deleteDoc,
   onSnapshot,
   collection,
@@ -462,6 +463,9 @@ export function subscribeToCloudPresence(
 
 const RADIO_SIGNALS_COLLECTION = 'dimensio_radio_signals';
 const RADIO_PRESENCE_COLLECTION = 'dimensio_radio_presence';
+const RADIO_SIGNAL_WINDOW_MS = 15000;
+const RADIO_SIGNAL_RETENTION_MS = 120000;
+const RADIO_PRESENCE_TTL_MS = 60000;
 
 export interface RadioCloudPresence {
   peerId: string;
@@ -471,29 +475,35 @@ export interface RadioCloudPresence {
   lastSeen: number;
 }
 
-/**
- * Pushes WebRTC / PTT signaling messages directly to Firestore in real-time.
- * Filtra candidatos ICE para não consumir cota do Firestore.
- */
-/**
- * Zero-cost WebRTC Signaling & Radio Presence Bus
- *
- * ARQUITETURA DE COTA ZERO:
- * O rádio PTT e troca de sinais WebRTC (candidatos ICE, SDP, heartbeats a cada 8s)
- * NUNCA devem ser gravados no Firestore para não esgotar a cota diária gratuita (50k leituras/dia).
- * Em vez disso, essas operações utilizam o endpoint local ultrarrápido /api/signal e /api/signal/presence
- * do próprio servidor Express da aplicação (0 ms de delay e 0 custo de Firestore).
- */
+function radioCollectionName(base: string, workspaceName?: string): string {
+  const safeWs = (workspaceName || 'default')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 80);
+  return `${base}_${safeWs || 'default'}`;
+}
 
-export async function sendFirestoreRadioSignals(messages: SignalMessage[]): Promise<void> {
-  if (!messages || messages.length === 0) return;
+function isHtmlResponse(res: Response): boolean {
+  const contentType = res.headers.get('content-type') || '';
+  return contentType.toLowerCase().includes('text/html');
+}
+
+/**
+ * Pushes WebRTC / PTT signaling messages to the local Express relay.
+ * Returns false when the endpoint is missing (e.g. static hosting serving index.html).
+ */
+export async function sendFirestoreRadioSignals(messages: SignalMessage[]): Promise<boolean> {
+  if (!messages || messages.length === 0) return true;
   try {
-    await fetch('/api/signal', {
+    const res = await fetch('/api/signal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ signal: messages }),
     });
-  } catch {}
+    return res.ok && !isHtmlResponse(res);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -550,7 +560,171 @@ export function subscribeToRadioCloudPresence(
   return () => {};
 }
 
+/**
+ * Firestore fallback for environments where /api/signal is not reachable
+ * (Firebase Hosting / static preview). Used only when the local relay is absent.
+ */
+export async function sendRadioSignalsToFirestore(
+  messages: SignalMessage[],
+  workspaceName?: string
+): Promise<boolean> {
+  if (!messages || messages.length === 0) return true;
+  if (isFirestoreQuotaExceeded()) return false;
+  try {
+    const colRef = collection(db, radioCollectionName(RADIO_SIGNALS_COLLECTION, workspaceName));
+    await Promise.all(
+      messages.map((message) =>
+        addDoc(colRef, stripUndefinedDeep({ ...message, ts: message.ts || Date.now() }))
+      )
+    );
+    return true;
+  } catch (err) {
+    if (!isQuotaExceededError(err)) {
+      console.warn('Radio signaling via Firestore failed:', err);
+    }
+    return false;
+  }
+}
+
+async function cleanupOldRadioSignals(colRef: ReturnType<typeof collection>): Promise<void> {
+  try {
+    const cutoff = Date.now() - RADIO_SIGNAL_RETENTION_MS;
+    const oldSignals = await getDocs(
+      query(colRef, where('ts', '<', cutoff), orderBy('ts', 'asc'), limit(75))
+    );
+    await Promise.all(oldSignals.docs.map((entry) => deleteDoc(entry.ref)));
+  } catch {}
+}
+
+export function subscribeToRadioSignalsFromFirestore(
+  workspaceName: string | undefined,
+  onSignal: (msg: SignalMessage) => void,
+  onError?: (err: unknown) => void
+): Unsubscribe {
+  if (isFirestoreQuotaExceeded()) return () => {};
+  const colRef = collection(db, radioCollectionName(RADIO_SIGNALS_COLLECTION, workspaceName));
+  void cleanupOldRadioSignals(colRef);
+  const seen = new Set<string>();
+  const since = Date.now() - RADIO_SIGNAL_WINDOW_MS;
+  return onSnapshot(
+    query(colRef, where('ts', '>', since), orderBy('ts', 'asc'), limit(200)),
+    (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type !== 'added') return;
+        const data = change.doc.data() as SignalMessage;
+        if (!data || !data.mid || !data.sender || seen.has(data.mid)) return;
+        seen.add(data.mid);
+        onSignal(data);
+      });
+      if (seen.size > 1000) seen.clear();
+    },
+    (err) => {
+      if (!isQuotaExceededError(err)) {
+        console.warn('Radio signaling subscription failed:', err);
+      }
+      onError?.(err);
+    }
+  );
+}
+
+export async function updateRadioPresenceInFirestore(
+  peerId: string,
+  peerName: string,
+  peerRole: string,
+  channels: string[],
+  workspaceName?: string
+): Promise<boolean> {
+  if (!peerId) return false;
+  if (isFirestoreQuotaExceeded()) return false;
+  try {
+    const docRef = doc(
+      db,
+      radioCollectionName(RADIO_PRESENCE_COLLECTION, workspaceName),
+      peerId.replace(/\//g, '_')
+    );
+    await setDoc(docRef, {
+      peerId,
+      peerName,
+      peerRole,
+      channels,
+      lastSeen: Date.now(),
+    });
+    return true;
+  } catch (err) {
+    if (!isQuotaExceededError(err)) {
+      console.warn('Radio presence via Firestore failed:', err);
+    }
+    return false;
+  }
+}
+
+export async function removeRadioPresenceFromFirestore(
+  peerId: string,
+  workspaceName?: string
+): Promise<void> {
+  if (!peerId) return;
+  try {
+    await deleteDoc(
+      doc(
+        db,
+        radioCollectionName(RADIO_PRESENCE_COLLECTION, workspaceName),
+        peerId.replace(/\//g, '_')
+      )
+    );
+  } catch {}
+}
+
+export function subscribeToRadioPresenceFromFirestore(
+  workspaceName: string | undefined,
+  onUpdate: (peersList: RadioCloudPresence[]) => void,
+  onError?: (err: unknown) => void
+): Unsubscribe {
+  if (isFirestoreQuotaExceeded()) return () => {};
+  const colRef = collection(db, radioCollectionName(RADIO_PRESENCE_COLLECTION, workspaceName));
+  return onSnapshot(
+    query(colRef, orderBy('lastSeen', 'desc'), limit(100)),
+    (snapshot) => {
+      const now = Date.now();
+      const peers: RadioCloudPresence[] = [];
+      snapshot.forEach((entry) => {
+        const peer = entry.data() as RadioCloudPresence;
+        if (!peer || !peer.peerId) return;
+        if (now - (peer.lastSeen || 0) >= RADIO_PRESENCE_TTL_MS) return;
+        peers.push({ ...peer, lastSeen: now });
+      });
+      onUpdate(peers);
+    },
+    (err) => {
+      if (!isQuotaExceededError(err)) {
+        console.warn('Radio presence subscription failed:', err);
+      }
+      onError?.(err);
+    }
+  );
+}
+
 const USER_PROFILES_COLLECTION = 'dimensio_user_profiles';
+
+/**
+ * Firestore rejects documents containing `undefined`. Remove essas chaves
+ * recursivamente antes de gravar (ex.: collaboratorId ausente para um gestor).
+ */
+export function stripUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined)
+      .map((item) => stripUndefinedDeep(item)) as unknown as T;
+  }
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      if (item === undefined) continue;
+      result[key] = stripUndefinedDeep(item);
+    }
+    return result as T;
+  }
+  return value;
+}
 
 /**
  * Saves or updates a user profile and personal preferences in Firestore.
@@ -564,11 +738,11 @@ export async function saveUserProfileToFirestore(
     const docRef = doc(db, USER_PROFILES_COLLECTION, docId);
     await setDoc(
       docRef,
-      {
+      stripUndefinedDeep({
         ...profile,
         lastSeenMs: Date.now(),
         updatedAt: new Date().toISOString(),
-      },
+      }),
       { merge: true }
     );
   } catch (err) {

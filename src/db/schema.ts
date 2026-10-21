@@ -75,7 +75,7 @@ export const serviceRequests = pgTable('service_requests', {
 export const workspaceIntegrations = pgTable('workspace_integrations', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
-  service: text('service').notNull(), // 'calendar', 'tasks', 'slides', 'sheets', 'chat'
+  service: text('service').notNull(), // 'calendar', 'tasks', 'chat'
   resourceId: text('resource_id'),
   resourceName: text('resource_name'),
   metadata: jsonb('metadata'),

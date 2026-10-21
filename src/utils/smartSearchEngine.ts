@@ -64,13 +64,13 @@ export function parseNaturalDateBR(dateStr: string, baseYear = new Date().getFul
   const currentYear = baseYear || today.getFullYear();
 
   // "hoje"
-  if (norm === 'hoje') {
+  if (/\bhoje\b/.test(norm)) {
     const iso = getTodayISO();
     return { isoDate: iso, formattedBR: formatDateBR(iso) };
   }
 
-  // "amanha"
-  if (norm === 'amanha') {
+  // "amanha" (isolado ou dentro de uma frase, mas não "depois de amanhã")
+  if (/\bamanha\b/.test(norm) && !norm.includes('depois de amanha')) {
     const tm = new Date();
     tm.setDate(tm.getDate() + 1);
     const y = tm.getFullYear();
@@ -91,6 +91,28 @@ export function parseNaturalDateBR(dateStr: string, baseYear = new Date().getFul
     return { isoDate: iso, formattedBR: formatDateBR(iso) };
   }
 
+  // Dias da semana (próxima ocorrência): "segunda", "terça-feira", "sábado"...
+  const weekdayMatch = norm.match(/\b(domingo|segunda|terca|quarta|quinta|sexta|sabado)(?:-feira)?\b/);
+  if (weekdayMatch) {
+    const weekdayMap: Record<string, number> = {
+      domingo: 0,
+      segunda: 1,
+      terca: 2,
+      quarta: 3,
+      quinta: 4,
+      sexta: 5,
+      sabado: 6,
+    };
+    const targetDay = weekdayMap[weekdayMatch[1]];
+    const base = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    let delta = (targetDay - base.getDay() + 7) % 7;
+    if (delta === 0) delta = 7;
+    if (/\bproxima\b/.test(norm) && delta < 7) delta += 7;
+    base.setDate(base.getDate() + delta);
+    const iso = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}-${String(base.getDate()).padStart(2, '0')}`;
+    return { isoDate: iso, formattedBR: formatDateBR(iso) };
+  }
+
   // Explicit DD/MM or DD/MM/YYYY
   const dateMatch = dateStr.match(/(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?/);
   if (dateMatch) {
@@ -99,9 +121,13 @@ export function parseNaturalDateBR(dateStr: string, baseYear = new Date().getFul
     let year = dateMatch[3] ? parseInt(dateMatch[3], 10) : currentYear;
     if (year < 100) year += 2000;
 
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      return { isoDate: iso, formattedBR: `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}` };
+    if (year >= 2000 && year <= 2100 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      const parsed = new Date(year, month - 1, day);
+      // Rejeita datas impossíveis (31/02, 32/01 etc.).
+      if (parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day) {
+        const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        return { isoDate: iso, formattedBR: `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}` };
+      }
     }
   }
 
@@ -203,7 +229,13 @@ export function parseSmartSearchAction(rawInput: string, ctx: SmartActionContext
     norm.includes('agendamento') ||
     norm.includes('na lista');
 
-  if (isFeedbackOrTaskRegex) {
+  // "tarefa Carlos em Recebimento" é alocação, não criação de rotina. Sem esta
+  // guarda, o cenário genérico de tarefa capturava o comando antes do cenário 2.
+  const looksLikeAllocation =
+    /^(?:alocar|aloca|posto|escalar|tarefa|atribuir)\s+/i.test(cleanInput) &&
+    /\s+(?:em|no|na|para|ao)\s+/i.test(cleanInput);
+
+  if (isFeedbackOrTaskRegex && !looksLikeAllocation) {
     // 1. Extract quoted name or inferred name
     let extractedCollabName = '';
     const quoteMatch = cleanInput.match(/["'“]([^"'”]+)["'”]/);

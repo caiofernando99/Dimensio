@@ -15,6 +15,11 @@ import {
   updateRadioCloudPresence,
   removeRadioCloudPresence,
   subscribeToRadioCloudPresence,
+  sendRadioSignalsToFirestore,
+  subscribeToRadioSignalsFromFirestore,
+  updateRadioPresenceInFirestore,
+  removeRadioPresenceFromFirestore,
+  subscribeToRadioPresenceFromFirestore,
 } from '../lib/firestoreStorage';
 
 export interface CommContextType {
@@ -183,6 +188,10 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const webhookUrl = state.onlineSpreadsheet?.webhookUrl?.trim() || '/api/signal';
+  const radioWorkspace =
+    (state.onlineSpreadsheet?.firestoreCollection || state.onlineSpreadsheet?.name || state.teamName || 'default').trim() ||
+    'default';
+  const externalWebhook = /^https?:\/\//i.test(webhookUrl) && !webhookUrl.includes('/api/signal');
   const [enabled, setEnabledState] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('dimensio_radio_enabled');
@@ -209,6 +218,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   volumeRef.current = volume;
 
   const [relayOnline, setRelayOnline] = useState(false);
+  const [relayMode, setRelayMode] = useState<'server' | 'webhook' | 'firestore'>('server');
   const [subscribedChannels, setSubscribedChannels] = useState<string[]>([]);
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
   const [peersMap, setPeersMap] = useState<Record<string, CommPeerInfo[]>>({});
@@ -351,6 +361,13 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   } | null>(null);
   const bcRef = useRef<BroadcastChannel | null>(null);
   const relayWarnedRef = useRef(false);
+  const cloudBlockedWarnedRef = useRef(false);
+  const showNoticeRef = useRef(showNotice);
+  showNoticeRef.current = showNotice;
+  const relayModeRef = useRef<'server' | 'webhook' | 'firestore'>('server');
+  relayModeRef.current = relayMode;
+  const radioWorkspaceRef = useRef(radioWorkspace);
+  radioWorkspaceRef.current = radioWorkspace;
   const sendSignalsRef = useRef<(msgs: SignalMessage[]) => void>(() => {});
 
   // Dismissed Direct Channels Map with close timestamps
@@ -513,18 +530,29 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     });
   }, []);
 
-  // Persist state updates
+  // Persist state updates with debounce to avoid spamming background sync and IndexedDB
+  const lastSavedStateRef = useRef<string>('');
   useEffect(() => {
-    saveRadioStateDB({
-      enabled,
-      volume,
-      sfxEnabled,
-      mode,
-      muted,
-      activeChannel,
-      subscribedChannels,
-    });
-    triggerRadioBackgroundSync('radio-state-sync');
+    const serialized = JSON.stringify({ enabled, volume, sfxEnabled, mode, muted, activeChannel, subscribedChannels });
+    if (serialized === lastSavedStateRef.current) return;
+
+    const timer = setTimeout(() => {
+      lastSavedStateRef.current = serialized;
+      saveRadioStateDB({
+        enabled,
+        volume,
+        sfxEnabled,
+        mode,
+        muted,
+        activeChannel,
+        subscribedChannels,
+      });
+      if (enabled) {
+        triggerRadioBackgroundSync('radio-state-sync');
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
   }, [enabled, volume, sfxEnabled, mode, muted, activeChannel, subscribedChannels]);
 
   const channels = useMemo<CommChannel[]>(() => {
@@ -1208,6 +1236,34 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  const pendingSignalsBatchRef = useRef<SignalMessage[]>([]);
+  const batchFlushTimeoutRef = useRef<any>(null);
+  const lastDirectPostTsRef = useRef<number>(0);
+
+  const flushSignalsOutbox = useCallback(async () => {
+    if (pendingSignalsBatchRef.current.length === 0) return;
+    const now = Date.now();
+    const elapsed = now - lastDirectPostTsRef.current;
+    if (elapsed < 100) {
+      if (!batchFlushTimeoutRef.current) {
+        batchFlushTimeoutRef.current = setTimeout(() => {
+          batchFlushTimeoutRef.current = null;
+          flushSignalsOutbox();
+        }, 100 - elapsed);
+      }
+      return;
+    }
+    lastDirectPostTsRef.current = now;
+    const batch = pendingSignalsBatchRef.current.splice(0, 40);
+    await sendFirestoreRadioSignals(batch);
+    if (pendingSignalsBatchRef.current.length > 0 && !batchFlushTimeoutRef.current) {
+      batchFlushTimeoutRef.current = setTimeout(() => {
+        batchFlushTimeoutRef.current = null;
+        flushSignalsOutbox();
+      }, 100);
+    }
+  }, []);
+
   const sendSignals = useCallback((messages: SignalMessage[]) => {
     if (messages.length === 0) return;
     const safeMessages = messages.map(sanitizeSignalMessage);
@@ -1216,16 +1272,34 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         bcRef.current.postMessage(safeMessages);
       } catch {}
     }
-    // Envio ultrarrápido para o barramento local /api/signal (0 custo de Firestore)
-    sendFirestoreRadioSignals(safeMessages);
+    if (relayModeRef.current === 'firestore') {
+      sendRadioSignalsToFirestore(safeMessages, radioWorkspaceRef.current).then((ok) => {
+        if (ok) return;
+        setRelayOnline(false);
+        if (!cloudBlockedWarnedRef.current) {
+          cloudBlockedWarnedRef.current = true;
+          showNoticeRef.current(
+            'A nuvem (Firestore) está bloqueada neste navegador. Desative bloqueadores de anúncios/privacidade ou configure o webhook do Apps Script.'
+          );
+        }
+      });
+      return;
+    }
+
+    // Rate-limited batched sending to prevent HTTP 429
+    pendingSignalsBatchRef.current.push(...safeMessages);
+    flushSignalsOutbox();
+
+    // Background worker only receives presence/heartbeats to prevent dual traffic
     if (workerRef.current) {
       try {
-        workerRef.current.postMessage({ type: 'outbox', messages: safeMessages });
+        const bgPresences = safeMessages.filter((m) => m.kind === 'presence');
+        if (bgPresences.length > 0) {
+          workerRef.current.postMessage({ type: 'outbox', messages: bgPresences });
+        }
       } catch (err) {}
-    } else {
-      pendingOutboxRef.current.push(...safeMessages);
     }
-  }, []);
+  }, [flushSignalsOutbox]);
   sendSignalsRef.current = sendSignals;
 
   const awaitGathered = useCallback((pc: RTCPeerConnection) => {
@@ -1250,10 +1324,14 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
     (entry: ConnEntry) => {
       const pc = entry.pc;
       if (entry.makingOffer) return;
+      if (pc.signalingState !== 'stable') return;
+      if (entry.polite) return;
       entry.makingOffer = true;
       (async () => {
         try {
+          if (pc.signalingState !== 'stable') return;
           const offer = await pc.createOffer();
+          if (pc.signalingState !== 'stable') return;
           await pc.setLocalDescription(offer);
           await awaitGathered(pc);
           entry.lastOffer = Date.now();
@@ -1273,8 +1351,10 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
             ts: Date.now(),
           }]);
           setRemotePeersMap((prev) => ({ ...prev }));
-        } catch (err) {
-          console.warn('Erro ao criar oferta WebRTC:', err);
+        } catch (err: any) {
+          if (err?.name !== 'InvalidStateError') {
+            console.warn('Erro ao criar oferta WebRTC:', err);
+          }
         } finally {
           entry.makingOffer = false;
         }
@@ -1374,6 +1454,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         const st = pc.connectionState;
         if (st === 'disconnected' || st === 'failed' || st === 'closed') return;
         if (entry.polite) return;
+        if (pc.signalingState !== 'stable') return;
         onNegotiationNeeded();
         sendOffer(entry);
       };
@@ -1463,7 +1544,9 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         }
       }
-      sendOffer(entry);
+      if (!entry.polite) {
+        sendOffer(entry);
+      }
     },
     [acquireMic, createPc, sendOffer]
   );
@@ -1734,14 +1817,14 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
             if (!offerSdp || !offerSdp.sdp) return;
 
             const currentState = conn.pc.signalingState;
-            if (currentState === 'have-remote-offer') return;
-
-            if (currentState === 'have-local-offer') {
-              if (conn.polite) {
-                await conn.pc.setLocalDescription({ type: 'rollback' });
-              } else {
+            const isOfferCollision = conn.makingOffer || currentState !== 'stable';
+            if (isOfferCollision) {
+              if (!conn.polite) {
                 return;
               }
+              try {
+                await conn.pc.setLocalDescription({ type: 'rollback' });
+              } catch (rollbackErr) {}
             }
 
             if (conn.pc.signalingState === 'stable' || conn.pc.signalingState === 'have-local-pranswer') {
@@ -1934,10 +2017,84 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
   const updatePeersFromListRef = useRef(updatePeersFromList);
   updatePeersFromListRef.current = updatePeersFromList;
 
-  // Barramento de Presença e Sinais em Tempo Real (SSE + /api/signal) — 0 COTA DE FIRESTORE
+  // Detecta se o relay Express (/api/signal) está realmente disponível.
+  // Em hospedagem estática o rewrite devolve index.html com HTTP 200, então
+  // validamos o content-type antes de confiar na resposta. O relay local é
+  // re-testado periodicamente, pois a primeira chamada pode falhar durante o
+  // fluxo de autenticação/cookies do AI Studio ou por instabilidade de rede.
   useEffect(() => {
     if (!enabled) return;
-    setRelayOnline(true);
+    let cancelled = false;
+    let failures = 0;
+    let retryTimer: number | null = null;
+
+    const probeRelay = async (): Promise<'available' | 'missing' | 'transient'> => {
+      try {
+        const res = await fetch('/api/signal/presence', {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          cache: 'no-store',
+        });
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        if (res.ok && contentType.includes('application/json')) {
+          const data = await res.json().catch(() => null);
+          return data && Array.isArray(data.peers) ? 'available' : 'transient';
+        }
+        if (res.ok && contentType.includes('text/html')) return 'missing';
+        if (res.status === 404 || res.status === 405) return 'missing';
+        return 'transient';
+      } catch {
+        return 'transient';
+      }
+    };
+
+    const detectRelay = async (initial = false) => {
+      const result = await probeRelay();
+      if (cancelled) return;
+
+      if (result === 'available') {
+        failures = 0;
+        if (relayModeRef.current !== 'server') {
+          relayModeRef.current = 'server';
+          setRelayMode('server');
+        }
+        return;
+      }
+
+      // 429/5xx/rede instável não significam que o relay não existe:
+      // mantém o modo atual e tenta novamente no próximo ciclo.
+      if (result === 'transient') return;
+
+      failures += 1;
+      if (initial && failures < 2) {
+        retryTimer = window.setTimeout(() => void detectRelay(false), 1500);
+        return;
+      }
+
+      const nextMode: 'server' | 'webhook' | 'firestore' = externalWebhook ? 'webhook' : 'firestore';
+      relayModeRef.current = nextMode;
+      setRelayMode(nextMode);
+      if (nextMode === 'firestore') {
+        setRelayOnline(false);
+        if (!relayWarnedRef.current) {
+          relayWarnedRef.current = true;
+          showNotice('Servidor de sinalização local indisponível. Rádio usando a nuvem (Firestore).');
+        }
+      }
+    };
+
+    void detectRelay(true);
+    const interval = window.setInterval(() => void detectRelay(false), 15000);
+    return () => {
+      cancelled = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      window.clearInterval(interval);
+    };
+  }, [enabled, externalWebhook, showNotice]);
+
+  // Barramento de Presença e Sinais em Tempo Real (SSE + /api/signal) — 0 COTA DE FIRESTORE
+  useEffect(() => {
+    if (!enabled || relayMode !== 'server') return;
     const myPeerId = peerIdRef.current;
     let sse: EventSource | null = null;
 
@@ -1952,6 +2109,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
             if (data && Array.isArray(data.peers)) {
               updatePeersFromListRef.current(data.peers);
             }
+            setRelayOnline(true);
           } catch {}
         });
         sse.addEventListener('presence', (e: MessageEvent) => {
@@ -2028,12 +2186,85 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       window.removeEventListener('pagehide', sendByeAndCleanup);
       sendByeAndCleanup();
     };
-  }, [enabled]);
+  }, [enabled, relayMode]);
 
+  // Firestore fallback bus for static hosting (Firebase Hosting / AI Studio preview)
   useEffect(() => {
-    if (!enabled || relayWarnedRef.current) return;
-    relayWarnedRef.current = true;
-  }, [enabled]);
+    if (!enabled || relayMode !== 'firestore') return;
+    let disposed = false;
+    const myPeerId = peerIdRef.current;
+    const workspace = radioWorkspace;
+
+    const sendPresence = async () => {
+      const ok = await updateRadioPresenceInFirestore(
+        peerIdRef.current,
+        peerNameRef.current,
+        peerRoleRef.current,
+        subscribedRef.current,
+        workspace
+      );
+      if (!disposed) setRelayOnline(ok);
+    };
+
+    void sendPresence();
+    const presenceTimer = window.setInterval(sendPresence, 20000);
+
+    const unsubscribeSignals = subscribeToRadioSignalsFromFirestore(
+      workspace,
+      (msg) => {
+        if (msg && msg.sender !== peerIdRef.current) {
+          handleSignalRef.current(msg);
+        }
+      },
+      () => {
+        if (disposed) return;
+        setRelayOnline(false);
+        if (!cloudBlockedWarnedRef.current) {
+          cloudBlockedWarnedRef.current = true;
+          showNoticeRef.current(
+            'A nuvem (Firestore) está bloqueada neste navegador. Desative bloqueadores de anúncios/privacidade ou configure o webhook do Apps Script.'
+          );
+        }
+      }
+    );
+
+    const unsubscribePresence = subscribeToRadioPresenceFromFirestore(
+      workspace,
+      (peers) => {
+        if (disposed) return;
+        updatePeersFromListRef.current(peers);
+        setRelayOnline(true);
+      },
+      () => {
+        if (!disposed) setRelayOnline(false);
+      }
+    );
+
+    const sendBye = () => {
+      const byeMsgs: SignalMessage[] = subscribedRef.current.map((ch) => ({
+        mid: generateId(),
+        kind: 'bye',
+        sender: peerIdRef.current,
+        channel: ch,
+        ts: Date.now(),
+      }));
+      void removeRadioPresenceFromFirestore(peerIdRef.current, workspace);
+      if (byeMsgs.length > 0) {
+        void sendRadioSignalsToFirestore(byeMsgs, workspace);
+      }
+    };
+
+    window.addEventListener('pagehide', sendBye);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(presenceTimer);
+      window.removeEventListener('pagehide', sendBye);
+      unsubscribeSignals();
+      unsubscribePresence();
+      sendBye();
+    };
+  }, [enabled, relayMode, radioWorkspace]);
 
   // Background Web Worker for non-throttled signaling and presence
   useEffect(() => {
@@ -2081,6 +2312,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
         channels: subscribedRef.current,
         pollMs: POLL_MS,
         heartbeatMs: HEARTBEAT_MS,
+        relayEnabled: relayMode !== 'firestore',
       },
     });
 
@@ -2105,7 +2337,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       worker.terminate();
       workerRef.current = null;
     };
-  }, [enabled, webhookUrl, state.onlineSpreadsheet?.url]);
+  }, [enabled, relayMode, webhookUrl, state.onlineSpreadsheet?.url]);
 
   useEffect(() => {
     const worker = workerRef.current;
@@ -2148,6 +2380,8 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
           if (peer) ensureConnectionRef.current(ch, peer);
           return;
         }
+        if (entry.polite) return;
+        if (entry.pc.signalingState !== 'stable') return;
         if (now - (entry.lastOffer || 0) < RETRY_INTERVAL_MS) return;
         const prevStatus = entry.status;
         entry.lastOffer = now;
@@ -2420,7 +2654,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       try {
         sendSignals(byeMsgs);
       } catch {}
-      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      if (relayModeRef.current !== 'firestore' && typeof navigator !== 'undefined' && navigator.sendBeacon) {
         try {
           const blob = new Blob(
             [JSON.stringify({ mode: 'signal', signal: byeMsgs, spreadsheetUrl: state.onlineSpreadsheet?.url || '' })],
@@ -2630,6 +2864,7 @@ export const CommunicationProvider: React.FC<{ children: React.ReactNode }> = ({
       micTrackReadyState: micTrackRef.current?.readyState ?? 'none',
       micLevel,
       relayOnline,
+      relayMode: relayModeRef.current,
       totalPeers: Object.values(peersMapRef.current).reduce((acc, l) => acc + l.length, 0),
       connections: conns,
       mediaKeepalive: mediaKeepalive.getDiagnostics(),
