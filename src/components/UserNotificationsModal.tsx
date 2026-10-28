@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import {
@@ -100,8 +100,13 @@ export const UserNotificationsModal: React.FC<UserNotificationsModalProps> = ({
     return false;
   };
 
+  const deletedIdsSet = useMemo(() => {
+    return new Set(state.deletedNotificationIds || []);
+  }, [state.deletedNotificationIds]);
+
   // In Portal Mode: show only notifications contextualized for this collaborator
   const portalNotifications = notifications.filter((n) => {
+    if (deletedIdsSet.has(n.id)) return false;
     return isNotificationForCurrentUser(n, true, collaboratorId);
   });
 
@@ -111,6 +116,7 @@ export const UserNotificationsModal: React.FC<UserNotificationsModalProps> = ({
   const filteredNotifications = isPortalMode
     ? portalNotifications
     : notifications.filter((n) => {
+        if (deletedIdsSet.has(n.id)) return false;
         if (notificationFilter === 'received') {
           // Excludes notifications sent by the current user by default
           return isNotificationForCurrentUser(n, false, collaboratorId);
@@ -119,7 +125,7 @@ export const UserNotificationsModal: React.FC<UserNotificationsModalProps> = ({
           // Includes notifications sent by the current user for their shift/team
           return isNotificationForCurrentUser(n, true, collaboratorId);
         }
-        // 'all_system': Show all notifications across system
+        // 'all_system': Show all non-deleted notifications across system
         return true;
       });
 

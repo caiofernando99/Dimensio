@@ -595,7 +595,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const isConnectionBlocked = (): boolean => {
     const cfg = sessionConfigRef.current;
     if (!cfg.alwaysOnline) return false;
-    const connected = Boolean(stateRef.current?.onlineSpreadsheet?.webhookUrl);
+    const connected = Boolean(
+      stateRef.current?.onlineSpreadsheet?.webhookUrl ||
+      stateRef.current?.onlineSpreadsheet?.databaseProvider === 'firestore'
+    );
     return !connected || !cloudOnlineRef.current;
   };
 
@@ -646,7 +649,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
     return {
       ...initialAppState,
-      updatedAtMs: Date.now(),
+      updatedAtMs: 0,
       collaborators: formattedInitialCols,
       isSampleData: false,
     };
@@ -716,7 +719,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return null;
   });
 
+  const identifiedUserRef = useRef<IdentifiedUser | null>(identifiedUser);
+  const syncUserSessionFromFirebaseAuthRef = useRef<((fbUser: User, customCompanyName?: string) => Promise<{ success: boolean; message: string }>) | null>(null);
+
   useEffect(() => {
+    identifiedUserRef.current = identifiedUser;
     try {
       if (identifiedUser) {
         getSessionStorage().setItem(IDENTIFIED_USER_KEY, JSON.stringify(identifiedUser));
@@ -734,9 +741,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Monitor Firebase Auth state changes
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user);
       setIsAuthLoading(false);
+      if (user) {
+        if (!identifiedUserRef.current || identifiedUserRef.current.firebaseUid !== user.uid) {
+          try {
+            await syncUserSessionFromFirebaseAuthRef.current?.(user);
+          } catch (e) {
+            console.warn('Error restoring user session:', e);
+          }
+        }
+        const currentCfg = stateRef.current.onlineSpreadsheet || DEFAULT_FIRESTORE_CONFIG;
+        fetchFromOnlineSpreadsheetRef.current?.(true);
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -4315,6 +4333,17 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     const compName = companyName.trim();
     if (!compName) return;
 
+    const targetConfig: OnlineSpreadsheetConfig = {
+      ...(stateRef.current.onlineSpreadsheet || DEFAULT_FIRESTORE_CONFIG),
+      name: compName,
+      databaseProvider: 'firestore',
+      firestoreCollection: 'dimensio_workspaces',
+      autoSyncEnabled: true,
+      syncStatus: 'success',
+    };
+
+    lastSyncedTimestampMs.current = Date.now();
+
     // Configura a empresa de forma persistente com Firestore ativo
     updateLocalState((prev) => ({
       ...prev,
@@ -4322,18 +4351,16 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       sector: sector || prev.sector || 'Operação',
       location: location || prev.location || '',
       isSetupCompleted: true,
-      onlineSpreadsheet: {
-        ...(prev.onlineSpreadsheet || DEFAULT_FIRESTORE_CONFIG),
-        name: compName,
-        databaseProvider: 'firestore',
-        firestoreCollection: 'dimensio_workspaces',
-        autoSyncEnabled: true,
-        syncStatus: 'success',
-      },
+      onlineSpreadsheet: targetConfig,
     }));
 
     addAuditLog('configuracao', `Empresa/Workspace "${compName}" configurada e ativada no Firestore em Nuvem.`);
     showNotice(`Empresa "${compName}" configurada com sucesso na Nuvem!`, undefined, undefined, 'success');
+
+    // Grava imediatamente no Firestore para inicializar o documento no banco
+    setTimeout(() => {
+      syncToConfig(targetConfig, false).catch((err) => console.warn('registerCompanyWorkspace cloud sync error:', err));
+    }, 200);
   };
 
   const syncUserSessionFromFirebaseAuth = async (
@@ -4445,13 +4472,20 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     return { success: true, message: `Bem-vindo, ${displayName}!` };
   };
 
+  syncUserSessionFromFirebaseAuthRef.current = syncUserSessionFromFirebaseAuth;
+
   const signInWithGoogleAuth = async (): Promise<{ success: boolean; message: string }> => {
     try {
       setIsAuthLoading(true);
       const result = await signInWithPopup(auth, googleProvider);
       const fbUser = result.user;
       if (!fbUser) return { success: false, message: 'Não foi possível autenticar com o Google.' };
-      return await syncUserSessionFromFirebaseAuth(fbUser);
+      const res = await syncUserSessionFromFirebaseAuth(fbUser);
+      if (res.success) {
+        const currentCfg = stateRef.current.onlineSpreadsheet || DEFAULT_FIRESTORE_CONFIG;
+        fetchFromOnlineSpreadsheetRef.current?.(true);
+      }
+      return res;
     } catch (err: any) {
       console.error('Google Sign-in error:', err);
       return { success: false, message: err?.message || 'Falha ao autenticar com o Google.' };
@@ -4464,16 +4498,21 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
     try {
       setIsAuthLoading(true);
       const user = await emailSignIn(email, pass);
-      return await syncUserSessionFromFirebaseAuth(user);
+      const res = await syncUserSessionFromFirebaseAuth(user);
+      if (res.success) {
+        const currentCfg = stateRef.current.onlineSpreadsheet || DEFAULT_FIRESTORE_CONFIG;
+        fetchFromOnlineSpreadsheetRef.current?.(true);
+      }
+      return res;
     } catch (err: any) {
       console.error('Email sign in error:', err);
       let msg = err?.message || 'Falha ao entrar com e-mail e senha.';
       if (err?.code === 'auth/invalid-credential' || err?.code === 'auth/wrong-password') {
         msg = 'E-mail ou senha incorretos.';
       } else if (err?.code === 'auth/user-not-found') {
-        msg = 'Usuǭrio nǜo encontrado. Verifique o e-mail digitado ou crie uma conta.';
+        msg = 'Usuário não encontrado. Verifique o e-mail digitado ou crie uma conta.';
       } else if (err?.code === 'auth/invalid-email') {
-        msg = 'Formato de e-mail invǭlido.';
+        msg = 'Formato de e-mail inválido.';
       } else if (err?.code === 'auth/operation-not-allowed') {
         msg = 'Login por e-mail/senha desativado no Firebase. Ative o provedor "Email/Password" no Console do Firebase > Authentication > Sign-in method e tente novamente.';
       }
@@ -4494,6 +4533,9 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       const user = await emailSignUp(email, pass, displayName);
       const syncResult = await syncUserSessionFromFirebaseAuth(user, companyName);
       if (syncResult.success) {
+        const currentCfg = stateRef.current.onlineSpreadsheet || DEFAULT_FIRESTORE_CONFIG;
+        fetchFromOnlineSpreadsheetRef.current?.(true);
+
         // Trigger welcome onboarding email with company next steps
         fetch('/api/auth/send-welcome-email', {
           method: 'POST',
@@ -5211,46 +5253,25 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       const targetNotif = notifs.find((n) => n.id === id);
       if (!targetNotif) return prev;
 
-      // When scope is 'self' (the default standard action), clear for the current user ONLY
-      if (scope === 'self') {
-        const userTokens = [userId, collabId, user.login, user.registration, user.name?.toLowerCase().trim()].filter(Boolean) as string[];
-        const updated = notifs.map((n) => {
-          if (n.id === id) {
-            const currentCleared = Array.isArray(n.clearedByUserIds) ? n.clearedByUserIds : [];
-            const newCleared = Array.from(new Set([...currentCleared, ...userTokens]));
-            return {
-              ...n,
-              clearedByUserIds: newCleared,
-              data: {
-                ...(n.data || {}),
-                clearedByUserIds: newCleared,
-              },
-            };
-          }
-          return n;
-        });
+      const userTokens = [userId, collabId, user.login, user.registration, user.name?.toLowerCase().trim()].filter(Boolean) as string[];
 
-        // Also record in user local storage cache (session-scoped)
-        if (userId) {
-          try {
-            const key = `dimensio_cleared_notifs_${userId}`;
-            const cached = JSON.parse(getAppStorage().getItem(key) || '[]');
-            getAppStorage().setItem(key, JSON.stringify(Array.from(new Set([...cached, id])).slice(-200)));
-          } catch {}
-        }
-
-        notificationsRef.current = updated;
-        return {
-          ...prev,
-          notifications: updated,
-        };
+      // Cache in user local storage so it remains hidden even across browser sessions
+      if (userId) {
+        try {
+          const key = `dimensio_cleared_notifs_${userId}`;
+          const cached = JSON.parse(getAppStorage().getItem(key) || '[]');
+          getAppStorage().setItem(key, JSON.stringify(Array.from(new Set([...cached, id])).slice(-200)));
+        } catch {}
       }
 
-      // If scope is 'global' (explicit global purge):
+      // Add to deletedNotificationIds list
       const existingDeleted = Array.isArray(prev.deletedNotificationIds) ? prev.deletedNotificationIds : [];
       const newDeleted = Array.from(new Set([...existingDeleted, id])).slice(-200);
+
+      // Permanently remove from notifications array
       const updatedNotifs = notifs.filter((n) => n.id !== id);
       notificationsRef.current = updatedNotifs;
+
       return {
         ...prev,
         deletedNotificationIds: newDeleted,
@@ -5258,11 +5279,10 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       };
     });
 
-    if (scope === 'global') {
-      setTimeout(() => {
-        syncToOnlineSpreadsheet(true).catch(() => {});
-      }, 250);
-    }
+    // Sync deletion to cloud immediately so Firestore / Spreadsheet receives the updated list
+    setTimeout(() => {
+      syncToOnlineSpreadsheet(true).catch(() => {});
+    }, 250);
   };
 
   const clearAllNotifications = (filter: 'read_only' | 'all' = 'all', scope: 'self' | 'global' = 'self') => {
@@ -5274,8 +5294,10 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       const current = prev.notifications || [];
       const userTokens = [userId, collabId, user.login, user.registration, user.name?.toLowerCase().trim()].filter(Boolean) as string[];
 
-      // Find notifications applicable to current user
-      const applicableNotifs = current.filter((n) => isNotificationForCurrentUser(n, true));
+      // Find notifications applicable to current user or all if global
+      const applicableNotifs = scope === 'global'
+        ? current
+        : current.filter((n) => isNotificationForCurrentUser(n, true));
       const targetNotifs =
         filter === 'read_only'
           ? applicableNotifs.filter(
@@ -5284,50 +5306,25 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
           : applicableNotifs;
 
       const targetIds = new Set(targetNotifs.map((n) => n.id));
+      if (targetIds.size === 0) return prev;
 
-      if (scope === 'self') {
-        // Mark as cleared for this user only
-        const updated = current.map((n) => {
-          if (targetIds.has(n.id)) {
-            const currentCleared = Array.isArray(n.clearedByUserIds) ? n.clearedByUserIds : [];
-            const newCleared = Array.from(new Set([...currentCleared, ...userTokens]));
-            return {
-              ...n,
-              clearedByUserIds: newCleared,
-              data: {
-                ...(n.data || {}),
-                clearedByUserIds: newCleared,
-              },
-            };
-          }
-          return n;
-        });
-
-        // Also record in user local storage cache (session-scoped)
-        if (userId) {
-          try {
-            const key = `dimensio_cleared_notifs_${userId}`;
-            const cached = JSON.parse(getAppStorage().getItem(key) || '[]');
-            getAppStorage().setItem(
-              key,
-              JSON.stringify(Array.from(new Set([...cached, ...Array.from(targetIds)])).slice(-200))
-            );
-          } catch {}
-        }
-
-        notificationsRef.current = updated;
-        return {
-          ...prev,
-          notifications: updated,
-        };
+      // Record in user local storage cache
+      if (userId) {
+        try {
+          const key = `dimensio_cleared_notifs_${userId}`;
+          const cached = JSON.parse(getAppStorage().getItem(key) || '[]');
+          getAppStorage().setItem(
+            key,
+            JSON.stringify(Array.from(new Set([...cached, ...Array.from(targetIds)])).slice(-200))
+          );
+        } catch {}
       }
 
-      // If scope is 'global' (explicit global purge):
-      const idsToDelete = Array.from(targetIds);
       const existingDeleted = Array.isArray(prev.deletedNotificationIds) ? prev.deletedNotificationIds : [];
-      const newDeleted = Array.from(new Set([...existingDeleted, ...idsToDelete])).slice(-200);
+      const newDeleted = Array.from(new Set([...existingDeleted, ...Array.from(targetIds)])).slice(-200);
       const updated = current.filter((n) => !targetIds.has(n.id));
       notificationsRef.current = updated;
+
       return {
         ...prev,
         deletedNotificationIds: newDeleted,
@@ -5335,11 +5332,9 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       };
     });
 
-    if (scope === 'global') {
-      setTimeout(() => {
-        syncToOnlineSpreadsheet(true).catch(() => {});
-      }, 250);
-    }
+    setTimeout(() => {
+      syncToOnlineSpreadsheet(true).catch(() => {});
+    }, 250);
 
     showNotice(
       filter === 'read_only'
@@ -6442,6 +6437,7 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
             }
             return success;
           }
+          lastSyncedTimestampMs.current = Date.now();
           return false;
         }
 
@@ -6473,10 +6469,13 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
           alertForNewRemoteNotifications(activeRemoteNotifs, prevLocalNotifIds);
         }
 
-        if (force || isFirstCloudPull || (remoteUpdatedAtMs > 0 && remoteUpdatedAtMs > localUpdatedAtMs)) {
-          applyRemoteToLocal(normalizedRemote, remoteUpdatedAtMs, { allowOlder: force || isFirstCloudPull });
-          lastSyncedTimestampMs.current = remoteUpdatedAtMs;
-          try { localStorage.setItem(LAST_SYNCED_TIMESTAMP_KEY, String(remoteUpdatedAtMs)); } catch {}
+        const localIsEmpty = (currentState.collaborators || []).length === 0 && (currentState.tasks || []).length === 0;
+        const remoteHasContent = (normalizedRemote.collaborators || []).length > 0 || (normalizedRemote.tasks || []).length > 0 || Boolean(normalizedRemote.teamName);
+
+        if (force || isFirstCloudPull || (localIsEmpty && remoteHasContent) || (remoteUpdatedAtMs > 0 && remoteUpdatedAtMs > localUpdatedAtMs)) {
+          applyRemoteToLocal(normalizedRemote, remoteUpdatedAtMs, { allowOlder: force || isFirstCloudPull || (localIsEmpty && remoteHasContent) });
+          lastSyncedTimestampMs.current = remoteUpdatedAtMs || Date.now();
+          try { localStorage.setItem(LAST_SYNCED_TIMESTAMP_KEY, String(lastSyncedTimestampMs.current)); } catch {}
           if (!isSilent) {
             showNotice('Dados sincronizados com o Firestore!', undefined, undefined, 'sync');
           }
@@ -6676,6 +6675,15 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
 
     // --- FIRESTORE PROVIDER PUSH ---
     if (currentConfig.databaseProvider === 'firestore') {
+      // Destructive auto-push protection: never automatically shrink the cloud roster
+      if (isAutoSync && lastRemoteCollaboratorCount.current > 0 && (currentState.collaborators || []).length < lastRemoteCollaboratorCount.current) {
+        return false;
+      }
+      // Never push empty uninitialized state over existing cloud data on auto-sync
+      if (isAutoSync && (currentState.collaborators || []).length === 0 && (currentState.tasks || []).length === 0 && !currentState.teamName) {
+        return false;
+      }
+
       const now = new Date();
       const timestampMs = Math.max(currentState.updatedAtMs || 0, Date.now());
       const timestampStr = `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR')}`;
@@ -7360,10 +7368,11 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
       return;
     }
 
-    // The spreadsheet is the source of truth. Never push local data over it
-    // before the first successful pull (lastSyncedTimestampMs === 0) or while
-    // a connection flow is still in progress.
-    if (lastSyncedTimestampMs.current === 0 || isConnectingRef.current) {
+    // Never push local data over the cloud before the first pull unless Firestore provider is active (which has destructive overwrite guards)
+    if (
+      (!state.onlineSpreadsheet?.databaseProvider && lastSyncedTimestampMs.current === 0) ||
+      isConnectingRef.current
+    ) {
       return;
     }
 
@@ -7438,17 +7447,19 @@ const setSelectedGlobalFilters = (filters: { shift?: string; teamLeader?: string
 
         // State reconciliation
         const timeSinceLastEdit = Date.now() - lastLocalEditTime.current;
+        const localIsEmpty = (currentState.collaborators || []).length === 0 && (currentState.tasks || []).length === 0;
+        const remoteHasContent = (normalizedRemote.collaborators || []).length > 0 || (normalizedRemote.tasks || []).length > 0 || Boolean(normalizedRemote.teamName);
         const isFirstCloudPull =
-          lastSyncedTimestampMs.current === 0 &&
-          (currentState.collaborators || []).length === 0 &&
-          (currentState.tasks || []).length === 0;
+          lastSyncedTimestampMs.current === 0 && localIsEmpty;
+
         if (
           isFirstCloudPull ||
-          (timeSinceLastEdit >= 2000 && remoteUpdatedAtMs > 0 && remoteUpdatedAtMs > localUpdatedAtMs && remoteUpdatedAtMs > lastSyncedTimestampMs.current)
+          (localIsEmpty && remoteHasContent) ||
+          (timeSinceLastEdit >= 1500 && remoteUpdatedAtMs > 0 && remoteUpdatedAtMs > localUpdatedAtMs && remoteUpdatedAtMs > lastSyncedTimestampMs.current)
         ) {
-          applyRemoteToLocal(normalizedRemote, remoteUpdatedAtMs, { skipSafetyBackup: true, allowOlder: isFirstCloudPull });
-          lastSyncedTimestampMs.current = remoteUpdatedAtMs;
-          try { localStorage.setItem(LAST_SYNCED_TIMESTAMP_KEY, String(remoteUpdatedAtMs)); } catch {}
+          applyRemoteToLocal(normalizedRemote, remoteUpdatedAtMs, { skipSafetyBackup: true, allowOlder: isFirstCloudPull || (localIsEmpty && remoteHasContent) });
+          lastSyncedTimestampMs.current = remoteUpdatedAtMs || Date.now();
+          try { localStorage.setItem(LAST_SYNCED_TIMESTAMP_KEY, String(lastSyncedTimestampMs.current)); } catch {}
         }
       },
       (err) => {
