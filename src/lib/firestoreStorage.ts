@@ -153,18 +153,25 @@ export interface CloudPresenceUser {
 export async function pushStateToFirestore(
   state: AppState,
   collectionName = DEFAULT_COLLECTION,
-  docId = DEFAULT_DOC_ID
+  docId = DEFAULT_DOC_ID,
+  overrideUpdatedAtMs?: number
 ): Promise<{ success: boolean; error?: string; quotaExceeded?: boolean }> {
   if (isFirestoreQuotaExceeded()) {
     return { success: false, error: 'Limite diário gratuito do Firestore atingido', quotaExceeded: true };
   }
 
+  // Segurança estrita: nunca mais gravar no doc global legado
+  if (!docId || docId === 'main_roster_state') {
+    return { success: false, error: 'ID de workspace privado inválido ou documento legado não permitido.' };
+  }
+
   try {
     const docRef = doc(db, collectionName, docId);
+    const effectiveUpdatedAtMs = overrideUpdatedAtMs || state.updatedAtMs || Date.now();
     
     // Prepare lightweight sanitized payload
     const payload = {
-      updatedAtMs: state.updatedAtMs || Date.now(),
+      updatedAtMs: effectiveUpdatedAtMs,
       selectedDate: state.selectedDate,
       location: state.location || '',
       teamName: state.teamName || '',
@@ -227,7 +234,8 @@ export async function pushStateToFirestore(
 
     // Remove any undefined properties across nested objects before calling setDoc
     const cleanPayload = JSON.parse(JSON.stringify(payload));
-    await setDoc(docRef, cleanPayload, { merge: true });
+    // Substitui o documento inteiro (sem merge: true) para evitar ressurreição de dados excluídos
+    await setDoc(docRef, cleanPayload);
     return { success: true };
   } catch (err: any) {
     if (isQuotaExceededError(err)) {
@@ -255,11 +263,19 @@ export function subscribeToFirestoreState(
     return () => {};
   }
 
+  if (!docId || docId === 'main_roster_state') {
+    return () => {};
+  }
+
   const docRef = doc(db, collectionName, docId);
 
   return onSnapshot(
     docRef,
     (snapshot) => {
+      // Ignora escritas locais pendentes no cache do próprio cliente para evitar conflitos de eco
+      if (snapshot.metadata?.hasPendingWrites) {
+        return;
+      }
       if (!snapshot.exists()) {
         return;
       }
@@ -313,6 +329,47 @@ export async function fetchStateFromFirestoreOnce(
     console.warn('Falha ao buscar estado do Firestore:', err?.message || err);
     return { state: null, updatedAtMs: 0 };
   }
+}
+
+/**
+ * Removes the old public global document 'main_roster_state' from Firestore to eliminate data leaks.
+ */
+export async function deleteLegacyPublicWorkspaceDoc(): Promise<void> {
+  try {
+    const legacyRef = doc(db, DEFAULT_COLLECTION, DEFAULT_DOC_ID);
+    await deleteDoc(legacyRef);
+    console.log('[Firestore Security] Documento global legado main_roster_state removido com sucesso.');
+  } catch (e) {
+    console.warn('[Firestore Security] Erro ao remover doc legado:', e);
+  }
+}
+
+/**
+ * Migrates data from legacy global document to an authenticated user's workspace, then deletes the global document.
+ */
+export async function migrateLegacyPublicWorkspaceIfPresent(targetDocId: string): Promise<Partial<AppState> | null> {
+  if (!targetDocId || targetDocId === DEFAULT_DOC_ID) return null;
+  try {
+    const legacyRef = doc(db, DEFAULT_COLLECTION, DEFAULT_DOC_ID);
+    const snap = await getDoc(legacyRef);
+    if (!snap.exists()) return null;
+    const data = snap.data();
+    if (data && ((data.collaborators && data.collaborators.length > 0) || data.teamName)) {
+      // Copy to private account workspace
+      const targetRef = doc(db, DEFAULT_COLLECTION, targetDocId);
+      await setDoc(targetRef, data);
+      // Delete legacy public document
+      await deleteDoc(legacyRef);
+      console.log(`[Firestore Security] Workspace migrado com segurança para ${targetDocId} e doc global apagado.`);
+      return data as Partial<AppState>;
+    } else {
+      // Empty document, simply delete it
+      await deleteDoc(legacyRef);
+    }
+  } catch (e) {
+    console.warn('[Firestore Security] Erro na migração do doc legado:', e);
+  }
+  return null;
 }
 
 /**
@@ -874,14 +931,19 @@ export async function saveBackupToFirestore(
   reason: string,
   cadenceType: 'daily' | 'interval' | 'manual' | 'safety' | 'recovery' = 'daily',
   authorName?: string,
-  maxRetain = 30
+  maxRetain = 30,
+  workspaceDocId?: string
 ): Promise<{ success: boolean; backup?: FirestoreBackupRecord; error?: string }> {
+  if (!auth.currentUser) {
+    return { success: false, error: 'Usuário não autenticado no Firestore' };
+  }
+
   try {
     const now = new Date();
     const createdDate = getTodayISO();
     const createdTime = now.toLocaleTimeString('pt-BR');
     const teamName = state.teamName || 'Equipe Dimensio';
-    const workspaceId = (state.onlineSpreadsheet?.firestoreCollection || 'main_workspace')
+    const workspaceId = (workspaceDocId || state.onlineSpreadsheet?.firestoreDocId || `ws_${auth.currentUser.uid}`)
       .replace(/[^a-zA-Z0-9_-]/g, '_');
 
     const id = cadenceType === 'daily'
@@ -947,7 +1009,7 @@ export async function listFirestoreBackups(
   workspaceName?: string,
   maxRecords = 40
 ): Promise<FirestoreBackupRecord[]> {
-  if (isFirestoreQuotaExceeded()) {
+  if (!auth.currentUser || isFirestoreQuotaExceeded()) {
     return [];
   }
 

@@ -38,6 +38,8 @@
       "properties": {
         "uid": { "type": "string" },
         "displayName": { "type": "string" },
+        "workspaceId": { "type": "string" },
+        "companyName": { "type": "string" },
         "photoUrl": { "type": "string" },
         "collaboratorId": { "type": "string" },
         "role": { "type": "string" },

@@ -80,6 +80,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
   const {
     state,
     identifyUser,
+    firebaseUser,
     signInWithGoogleAuth,
     signInWithEmailAuth,
     signUpWithEmailAuth,
@@ -89,10 +90,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
 
   const { t, language, setLanguage, availableLanguages } = useI18n();
 
-  // Mode defaults to signup_company if team has no collaborators, otherwise login
-  const [mode, setMode] = useState<AuthMode>(() => {
-    return (state.collaborators || []).length > 0 ? 'login' : 'signup_company';
-  });
+  // Mode defaults to login
+  const [mode, setMode] = useState<AuthMode>('login');
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -112,7 +111,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
   const [isLoading, setIsLoading] = useState(false);
 
   const collaborators = state.collaborators || [];
-  const hasTeamData = collaborators.length > 0;
+  // Never expose roster or collaborators to unauthenticated visitors
+  const hasTeamData = Boolean(firebaseUser) && collaborators.length > 0;
   const hasAdminPassword = Boolean(state.userPasswords?.['admin']);
   const hasSuperAdminPassword = Boolean(state.userPasswords?.['super_admin']);
 
@@ -278,8 +278,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnectCloud, onContinueAsG
       onContinueAsGuest();
       return;
     }
-    identifyUser('admin', undefined);
-    showNotice('Acesso concedido em modo de demonstração.');
+    setMode('signup_company');
+    showNotice('Cadastre sua empresa ou faça login para acessar seu espaço de trabalho isolado e seguro.');
   };
 
   return (

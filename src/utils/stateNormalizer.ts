@@ -455,7 +455,23 @@ export function normalizeAppState(rawInput: any, baseState?: AppState): AppState
     processKnowledgeList: Array.isArray(src.processKnowledgeList) ? src.processKnowledgeList : [],
     history: Array.isArray(src.history) && src.history.length > 0 ? src.history : (baseState?.history || []),
     dailyReports: typeof src.dailyReports === 'object' && src.dailyReports ? src.dailyReports : {},
-    onlineSpreadsheet: src.onlineSpreadsheet && typeof src.onlineSpreadsheet === 'object' ? src.onlineSpreadsheet : defaults.onlineSpreadsheet,
+    onlineSpreadsheet: (() => {
+      const base = baseState?.onlineSpreadsheet;
+      const incoming = src.onlineSpreadsheet;
+      if (base?.databaseProvider === 'firestore') {
+        return {
+          ...base,
+          ...(incoming && typeof incoming === 'object' && incoming.webhookUrl ? { webhookUrl: incoming.webhookUrl, url: incoming.url } : {}),
+          databaseProvider: 'firestore',
+          firestoreCollection: base.firestoreCollection || 'dimensio_workspaces',
+          autoSyncEnabled: base.autoSyncEnabled !== false,
+        };
+      }
+      if (incoming && typeof incoming === 'object' && (incoming.databaseProvider || incoming.webhookUrl)) {
+        return incoming;
+      }
+      return base || defaults.onlineSpreadsheet || DEFAULT_FIRESTORE_CONFIG;
+    })(),
     isSidebarCollapsed:
       src.isSidebarCollapsed !== undefined
         ? Boolean(src.isSidebarCollapsed)

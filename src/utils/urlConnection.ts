@@ -3,21 +3,29 @@ export interface CloudConnectionPayload {
   webhookUrl?: string;
   sheetName?: string;
   teamName?: string;
+  databaseProvider?: 'firestore' | 'sheets';
+  firestoreDocId?: string;
+  firestoreCollection?: string;
+  companyName?: string;
 }
 
 /**
  * Encodes connection parameters into an obfuscated/masked URL parameter string.
- * This prevents raw Google Sheets and Google Apps Script Webhook URLs from being visible
+ * This prevents raw Google Sheets and Google Apps Script Webhook URLs or workspace IDs from being visible
  * in plain text in the browser address bar.
  */
 export function encodeConnectionParams(payload: CloudConnectionPayload): string {
   try {
-    if (!payload.sheetUrl && !payload.webhookUrl) return '';
+    if (!payload.sheetUrl && !payload.webhookUrl && !payload.firestoreDocId) return '';
     const clean: CloudConnectionPayload = {};
     if (payload.sheetUrl) clean.sheetUrl = payload.sheetUrl.trim();
     if (payload.webhookUrl) clean.webhookUrl = payload.webhookUrl.trim();
     if (payload.sheetName) clean.sheetName = payload.sheetName.trim();
     if (payload.teamName) clean.teamName = payload.teamName.trim();
+    if (payload.databaseProvider) clean.databaseProvider = payload.databaseProvider;
+    if (payload.firestoreDocId) clean.firestoreDocId = payload.firestoreDocId.trim();
+    if (payload.firestoreCollection) clean.firestoreCollection = payload.firestoreCollection.trim();
+    if (payload.companyName) clean.companyName = payload.companyName.trim();
 
     const jsonStr = JSON.stringify(clean);
     const utf8Bytes = new TextEncoder().encode(jsonStr);
@@ -55,12 +63,16 @@ export function decodeConnectionParams(cxStr: string): CloudConnectionPayload | 
     const jsonStr = new TextDecoder().decode(bytes);
     const parsed = JSON.parse(jsonStr);
 
-    if (parsed && typeof parsed === 'object' && (parsed.sheetUrl || parsed.webhookUrl)) {
+    if (parsed && typeof parsed === 'object' && (parsed.sheetUrl || parsed.webhookUrl || parsed.firestoreDocId)) {
       return {
         sheetUrl: typeof parsed.sheetUrl === 'string' ? parsed.sheetUrl : undefined,
         webhookUrl: typeof parsed.webhookUrl === 'string' ? parsed.webhookUrl : undefined,
         sheetName: typeof parsed.sheetName === 'string' ? parsed.sheetName : undefined,
         teamName: typeof parsed.teamName === 'string' ? parsed.teamName : undefined,
+        databaseProvider: parsed.databaseProvider === 'firestore' || parsed.databaseProvider === 'sheets' ? parsed.databaseProvider : (parsed.firestoreDocId ? 'firestore' : undefined),
+        firestoreDocId: typeof parsed.firestoreDocId === 'string' ? parsed.firestoreDocId : undefined,
+        firestoreCollection: typeof parsed.firestoreCollection === 'string' ? parsed.firestoreCollection : undefined,
+        companyName: typeof parsed.companyName === 'string' ? parsed.companyName : undefined,
       };
     }
   } catch {

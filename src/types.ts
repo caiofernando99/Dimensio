@@ -296,6 +296,7 @@ export interface OnlineSpreadsheetConfig {
   webhookUrl?: string; // Optional Google Apps Script Web App / Webhook URL
   databaseProvider?: 'sheets' | 'firestore'; // Storage backend engine: Google Sheets or Firebase Firestore
   firestoreCollection?: string; // Custom collection / room name (default: 'dimensio_state')
+  firestoreDocId?: string; // Workspace Document ID in Firestore scoped to account/company (e.g. ws_uid)
   autoSyncEnabled?: boolean; // Real-time auto sync on edit
   lastSyncedAt?: string; // e.g. "25/07/2026 12:30:00"
   syncCount?: number;
@@ -507,6 +508,8 @@ export interface UserProfileData {
   uid: string; // Firebase UID or collaboratorId
   email?: string;
   displayName: string;
+  workspaceId?: string; // Isolated company workspace ID in Firestore (e.g. ws_${uid})
+  companyName?: string; // Company / enterprise organization name
   photoUrl?: string;
   collaboratorId?: string; // Linked collaborator in state.collaborators
   role?: string;
@@ -574,6 +577,7 @@ export interface IdentifiedUser {
   managerId?: string;
   accessLevel?: RoleAccessLevel;
   collaboratorId?: string;
+  workspaceId?: string;
   firebaseUid?: string;
   email?: string;
   photoUrl?: string;

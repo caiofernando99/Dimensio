@@ -1,9 +1,30 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Permitir leitura e escrita para sincronização colaborativa em tempo real da equipe Dimensio
+    // Perfil do usuário: somente o próprio usuário autenticado pode ler e gravar seu perfil
+    match /dimensio_user_profiles/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Workspaces de empresas: leitura permitida para quem tem o link do portal; gravação restrita a usuários autenticados
+    match /dimensio_workspaces/{workspaceId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Histórico de fechamentos de turno: acesso restrito a usuários autenticados
+    match /dimensio_shift_history/{recordId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Backups em nuvem: acesso restrito a usuários autenticados
+    match /dimensio_backups/{backupId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Regra padrão de segurança: bloqueia completamente acessos não-autenticados
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
   }
 }

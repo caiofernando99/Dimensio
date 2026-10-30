@@ -106,7 +106,24 @@ const MainLayout: React.FC = () => {
       };
     }
 
-    if (parsed && (parsed.sheetUrl || parsed.webhookUrl)) {
+    const wsParam = params.get('ws') || params.get('workspace') || params.get('workspaceId');
+    const directDocId = parsed?.firestoreDocId || wsParam;
+
+    if (directDocId || (parsed && parsed.databaseProvider === 'firestore')) {
+      const targetDocId = directDocId || parsed?.firestoreDocId;
+      if (targetDocId) {
+        setOnlineSpreadsheetConfig(
+          {
+            name: parsed?.teamName || parsed?.companyName || state.teamName || 'Workspace Operacional',
+            databaseProvider: 'firestore',
+            firestoreDocId: targetDocId,
+            firestoreCollection: parsed?.firestoreCollection || 'dimensio_workspaces',
+            autoSyncEnabled: true,
+          },
+          true
+        );
+      }
+    } else if (parsed && (parsed.sheetUrl || parsed.webhookUrl)) {
       if (isPortalView) {
         // Portal links automatically establish connection and pull cloud data
         setOnlineSpreadsheetConfig(
@@ -393,19 +410,10 @@ const MainLayout: React.FC = () => {
     new URLSearchParams(window.location.search).has('portal')
   );
 
-  // SESSÃO & SEGURANÇA — portões de acesso na frente de TODAS as telas:
-  // 1) Modo sempre conectado: sem conexão → bloqueio total (somente leitura).
-  // 2) Acesso anônimo desabilitado: sem usuário identificado → tela de login.
-  const alwaysOnlineBlocked = sessionConfig.alwaysOnline && isConnectionBlocked();
-  if (alwaysOnlineBlocked) {
-    return <AlwaysOnlineOverlay onConnectCloud={() => setIsCloudConnectOpen(true)} />;
-  }
-  // TELA INICIAL DEDICADA: primeiro login, cadastro e apresentação dos recursos
-  if (!identifiedUser && !isUrlStandalonePortal) {
-    return <LoginScreen onConnectCloud={() => setIsCloudConnectOpen(true)} />;
-  }
-
-  if (currentView === 'portal' || currentView === 'operator_portal') {
+  // Link direto do Portal da Base Operacional para colaboradores:
+  // Abre o portal diretamente sem exigir login do Google/Firebase; os colaboradores
+  // se identificam selecionando seu nome na lista da empresa.
+  if (currentView === 'portal' || currentView === 'operator_portal' || isUrlStandalonePortal) {
     return (
       <Suspense fallback={viewFallback}>
         <OperatorPortalView
@@ -416,6 +424,18 @@ const MainLayout: React.FC = () => {
         <FloatingToast />
       </Suspense>
     );
+  }
+
+  // SESSÃO & SEGURANÇA — portões de acesso para a gestão geral:
+  // 1) Modo sempre conectado: sem conexão → bloqueio total (somente leitura).
+  // 2) Acesso anônimo desabilitado: sem usuário identificado → tela de login.
+  const alwaysOnlineBlocked = sessionConfig.alwaysOnline && isConnectionBlocked();
+  if (alwaysOnlineBlocked) {
+    return <AlwaysOnlineOverlay onConnectCloud={() => setIsCloudConnectOpen(true)} />;
+  }
+  // TELA INICIAL DEDICADA: primeiro login, cadastro e apresentação dos recursos para o gestor
+  if (!identifiedUser) {
+    return <LoginScreen onConnectCloud={() => setIsCloudConnectOpen(true)} />;
   }
 
   return (
